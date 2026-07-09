@@ -240,5 +240,7 @@ export function useBoardView(boardId: string | undefined, enabled: boolean) {
     zoomIn,
     zoomOut,
     fitToView,
+    panBy,
+    getView: () => viewRef.current,
   }
 }

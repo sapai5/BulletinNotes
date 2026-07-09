@@ -39,7 +39,7 @@ export default function BoardPage() {
   const { viewers, ghosts, emitActivity, emitActivityEnd } =
     useBoardCollab(boardId)
 
-  const { containerRef, surfaceRef, scale, tx, ty, zoomIn, zoomOut, fitToView } =
+  const { containerRef, surfaceRef, scale, tx, ty, zoomIn, zoomOut, fitToView, panBy, getView } =
     useBoardView(boardId, !loading && !!board)
 
   // ---- Loading -------------------------------------------------------------
@@ -395,6 +395,9 @@ export default function BoardPage() {
               canEdit={note.author_id === user?.id}
               authorName={authorNames[note.author_id] ?? 'Someone'}
               scale={scale}
+              containerRef={containerRef}
+              panBy={panBy}
+              getView={getView}
               onMove={handleMove}
               onResize={handleResize}
               onBringToFront={handleBringToFront}
