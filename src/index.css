@@ -19,6 +19,8 @@ body {
   color: #4a3f55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Stop the whole page from rubber-banding on mobile. */
+  overscroll-behavior: none;
   /* Cute chunky cartoon arrow cursor (hotspot at the tip). */
   cursor: var(--cur-arrow), auto;
 }
@@ -90,9 +92,9 @@ textarea,
 
   /* Chunky cartoon button. */
   .btn-pop {
-    @apply inline-flex items-center justify-center gap-2 rounded-full border-2 border-ink
-      font-display font-semibold text-ink shadow-pop transition
-      active:translate-x-[3px] active:translate-y-[3px] active:shadow-none
+    @apply inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap
+      rounded-full border-2 border-ink font-display font-semibold text-ink shadow-pop
+      transition active:translate-x-[3px] active:translate-y-[3px] active:shadow-none
       disabled:opacity-60;
   }
 }

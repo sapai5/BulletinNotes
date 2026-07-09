@@ -263,7 +263,7 @@ export default function BoardPage() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-cream text-ink">
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-cream text-ink">
       <AppHeader>
         <div className="flex items-center gap-2">
           <button
@@ -280,7 +280,7 @@ export default function BoardPage() {
       </AppHeader>
 
       {/* Toolbar */}
-      <div className="flex items-center gap-2 border-b-2 border-ink/10 bg-cream/90 px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-2 border-b-2 border-ink/10 bg-cream/90 px-3 py-2.5 sm:px-4">
         <button onClick={addNote} className="btn-pop bg-coral px-3 py-1.5 text-sm text-white">
           <Plus className="h-4 w-4" strokeWidth={3} />
           Add note
@@ -358,7 +358,7 @@ export default function BoardPage() {
       {/* Canvas */}
       <div
         ref={scrollRef}
-        className="corkboard relative flex-1 overflow-auto"
+        className="corkboard relative flex-1 overflow-auto overscroll-none"
         style={{ touchAction: 'pan-x pan-y' }}
       >
         {/* Sizer carries the scaled dimensions so scrollbars are correct. */}
