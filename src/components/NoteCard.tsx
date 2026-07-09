@@ -4,27 +4,52 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import {
+  Palette,
+  ImagePlus,
+  Trash2,
+  Loader2,
+  MoveDiagonal2,
+  X,
+} from 'lucide-react'
 import type { Note } from '../types'
 import { supabase, NOTE_IMAGES_BUCKET } from '../lib/supabase'
+import { prepareImageForUpload, errorMessage } from '../lib/imageUpload'
+import { useUI } from '../context/UIContext'
+import type { ActivityInput } from '../hooks/useBoardCollab'
 
 export const NOTE_COLORS = [
   '#fef08a', // yellow
-  '#fca5a5', // red
-  '#a7f3d0', // green
-  '#93c5fd', // blue
-  '#f5d0fe', // purple
-  '#fed7aa', // orange
-  '#e2e8f0', // gray
+  '#ffc8dd', // bubble pink
+  '#b9fbc0', // mint
+  '#a2d2ff', // sky
+  '#cdb4db', // grape
+  '#ffb4a2', // peach
+  '#fdffb6', // lemon
+  '#ffffff', // white
 ]
+
+const MIN_W = 160
+const MIN_H = 150
 
 interface Props {
   note: Note
   canEdit: boolean
   authorName: string
   onMove: (id: string, x: number, y: number) => void
+  onResize: (id: string, width: number, height: number) => void
   onBringToFront: (id: string) => void
   onPatch: (id: string, patch: Partial<Note>) => void
   onDelete: (id: string) => void
+  onActivity?: (input: ActivityInput) => void
+  onActivityEnd?: () => void
+}
+
+// Deterministic tiny rotation per note so the board feels hand-pinned.
+function tiltFor(id: string) {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 1000
+  return (h / 1000) * 5 - 2.5 // -2.5deg .. +2.5deg
 }
 
 export default function NoteCard({
@@ -32,34 +57,70 @@ export default function NoteCard({
   canEdit,
   authorName,
   onMove,
+  onResize,
   onBringToFront,
   onPatch,
   onDelete,
+  onActivity,
+  onActivityEnd,
 }: Props) {
-  const cardRef = useRef<HTMLDivElement>(null)
+  const { confirm, toast } = useUI()
   const [pos, setPos] = useState({ x: note.x, y: note.y })
+  const [size, setSize] = useState({ w: note.width, h: note.height })
   const [dragging, setDragging] = useState(false)
+  const [resizing, setResizing] = useState(false)
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(note.text)
   const [showPalette, setShowPalette] = useState(false)
   const [tagDraft, setTagDraft] = useState('')
   const [uploading, setUploading] = useState(false)
 
-  // Drag bookkeeping stored in a ref so listeners see fresh values.
   const drag = useRef({ startX: 0, startY: 0, originX: 0, originY: 0 })
+  const rsz = useRef({ startX: 0, startY: 0, originW: 0, originH: 0 })
 
-  // Keep local position in sync when the note moves remotely (realtime).
+  const tilt = tiltFor(note.id)
+
+  // Throttled broadcast of live activity so others see a "shadow".
+  const lastEmit = useRef(0)
+  function emit(
+    kind: ActivityInput['kind'],
+    extra: Partial<ActivityInput> = {},
+    throttleMs = 0,
+  ) {
+    if (!onActivity) return
+    if (throttleMs) {
+      const now = Date.now()
+      if (now - lastEmit.current < throttleMs) return
+      lastEmit.current = now
+    }
+    onActivity({
+      noteId: note.id,
+      x: pos.x,
+      y: pos.y,
+      width: size.w,
+      height: size.h,
+      color: note.color,
+      text,
+      kind,
+      ...extra,
+    })
+  }
+
   useEffect(() => {
     if (!dragging) setPos({ x: note.x, y: note.y })
   }, [note.x, note.y, dragging])
 
   useEffect(() => {
+    if (!resizing) setSize({ w: note.width, h: note.height })
+  }, [note.width, note.height, resizing])
+
+  useEffect(() => {
     if (!editing) setText(note.text)
   }, [note.text, editing])
 
+  // ---- Drag ----------------------------------------------------------------
   function handlePointerDown(e: ReactPointerEvent) {
     if (!canEdit) return
-    // Ignore drags that start on interactive controls.
     if ((e.target as HTMLElement).closest('[data-no-drag]')) return
     e.preventDefault()
     onBringToFront(note.id)
@@ -72,28 +133,67 @@ export default function NoteCard({
     }
     document.body.classList.add('dragging')
 
-    const handleMove = (ev: PointerEvent) => {
-      const nx = drag.current.originX + (ev.clientX - drag.current.startX)
-      const ny = drag.current.originY + (ev.clientY - drag.current.startY)
-      setPos({ x: Math.max(0, nx), y: Math.max(0, ny) })
+    const move = (ev: PointerEvent) => {
+      const nx = Math.max(0, drag.current.originX + (ev.clientX - drag.current.startX))
+      const ny = Math.max(0, drag.current.originY + (ev.clientY - drag.current.startY))
+      setPos({ x: nx, y: ny })
+      emit('moving', { x: nx, y: ny }, 55)
     }
-    const handleUp = () => {
-      document.removeEventListener('pointermove', handleMove)
-      document.removeEventListener('pointerup', handleUp)
+    const up = () => {
+      document.removeEventListener('pointermove', move)
+      document.removeEventListener('pointerup', up)
       document.body.classList.remove('dragging')
       setDragging(false)
       setPos((p) => {
         onMove(note.id, p.x, p.y)
         return p
       })
+      onActivityEnd?.()
     }
-    document.addEventListener('pointermove', handleMove)
-    document.addEventListener('pointerup', handleUp)
+    document.addEventListener('pointermove', move)
+    document.addEventListener('pointerup', up)
+  }
+
+  // ---- Resize --------------------------------------------------------------
+  function handleResizeDown(e: ReactPointerEvent) {
+    if (!canEdit) return
+    e.preventDefault()
+    e.stopPropagation()
+    onBringToFront(note.id)
+    setResizing(true)
+    rsz.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      originW: size.w,
+      originH: size.h,
+    }
+    document.body.classList.add('resizing')
+
+    const move = (ev: PointerEvent) => {
+      const w = Math.max(MIN_W, rsz.current.originW + (ev.clientX - rsz.current.startX))
+      const h = Math.max(MIN_H, rsz.current.originH + (ev.clientY - rsz.current.startY))
+      setSize({ w, h })
+      emit('resizing', { width: w, height: h }, 55)
+    }
+    const up = () => {
+      document.removeEventListener('pointermove', move)
+      document.removeEventListener('pointerup', up)
+      document.body.classList.remove('resizing')
+      setResizing(false)
+      setSize((s) => {
+        onResize(note.id, Math.round(s.w), Math.round(s.h))
+        return s
+      })
+      onActivityEnd?.()
+    }
+    document.addEventListener('pointermove', move)
+    document.addEventListener('pointerup', up)
   }
 
   function commitText() {
     setEditing(false)
     if (text !== note.text) onPatch(note.id, { text })
+    onActivityEnd?.()
   }
 
   function addTag() {
@@ -116,45 +216,47 @@ export default function NoteCard({
     if (!file) return
     setUploading(true)
     try {
-      const ext = file.name.split('.').pop() ?? 'png'
+      const { blob, ext, contentType } = await prepareImageForUpload(file)
       const path = `${note.board_id}/${note.id}-${Date.now()}.${ext}`
       const { error: upErr } = await supabase.storage
         .from(NOTE_IMAGES_BUCKET)
-        .upload(path, file, { upsert: true })
+        .upload(path, blob, { upsert: true, contentType })
       if (upErr) throw upErr
       const { data } = supabase.storage
         .from(NOTE_IMAGES_BUCKET)
         .getPublicUrl(path)
       onPatch(note.id, { image_url: data.publicUrl })
     } catch (err) {
-      alert(
-        'Image upload failed: ' +
-          (err instanceof Error ? err.message : 'unknown error'),
-      )
+      toast(errorMessage(err), 'error')
     } finally {
       setUploading(false)
       e.target.value = ''
     }
   }
 
+  const active = dragging || resizing
+
   return (
     <div
-      ref={cardRef}
       onPointerDown={handlePointerDown}
       style={{
         left: pos.x,
         top: pos.y,
-        width: note.width,
-        minHeight: note.height,
+        width: size.w,
+        height: size.h,
         backgroundColor: note.color,
         zIndex: note.z_index,
+        transform: active ? 'rotate(0deg) scale(1.02)' : `rotate(${tilt}deg)`,
         cursor: canEdit ? 'grab' : 'default',
       }}
-      className="absolute flex flex-col rounded-md p-3 text-slate-900 shadow-lg ring-1 ring-black/10 transition-shadow"
+      className="absolute flex flex-col rounded-2xl border-2 border-ink/80 p-3 pt-5 text-ink shadow-pop transition-[box-shadow,transform] duration-150 hover:shadow-pop-lg"
     >
+      {/* Tape strip */}
+      <div className="pointer-events-none absolute -top-2.5 left-1/2 h-5 w-16 -translate-x-1/2 -rotate-2 rounded-sm bg-white/50 ring-1 ring-ink/10 backdrop-blur-[1px]" />
+
       {/* Header row */}
       <div className="mb-1 flex items-center justify-between gap-1">
-        <span className="truncate text-[11px] font-medium text-slate-700/70">
+        <span className="max-w-[55%] truncate font-display text-[11px] font-bold text-ink/60">
           {authorName}
         </span>
         {canEdit && (
@@ -162,14 +264,19 @@ export default function NoteCard({
             <button
               title="Change color"
               onClick={() => setShowPalette((s) => !s)}
-              className="flex h-5 w-5 items-center justify-center rounded-full ring-1 ring-black/20"
-              style={{ backgroundColor: note.color }}
-            />
+              className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-ink/70 bg-white/70 hover:bg-white"
+            >
+              <Palette className="h-3.5 w-3.5" strokeWidth={2.5} />
+            </button>
             <label
               title="Add image"
-              className="flex h-5 w-5 cursor-pointer items-center justify-center rounded text-xs hover:bg-black/10"
+              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border-2 border-ink/70 bg-white/70 hover:bg-white"
             >
-              {uploading ? '…' : '🖼'}
+              {uploading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.5} />
+              ) : (
+                <ImagePlus className="h-3.5 w-3.5" strokeWidth={2.5} />
+              )}
               <input
                 type="file"
                 accept="image/*"
@@ -179,12 +286,19 @@ export default function NoteCard({
             </label>
             <button
               title="Delete note"
-              onClick={() => {
-                if (confirm('Delete this note?')) onDelete(note.id)
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: 'Delete this note?',
+                    confirmText: 'Delete',
+                    danger: true,
+                  })
+                )
+                  onDelete(note.id)
               }}
-              className="flex h-5 w-5 items-center justify-center rounded text-xs hover:bg-black/10"
+              className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-ink/70 bg-white/70 text-coral hover:bg-coral hover:text-white"
             >
-              ✕
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={2.5} />
             </button>
           </div>
         )}
@@ -193,7 +307,7 @@ export default function NoteCard({
       {showPalette && canEdit && (
         <div
           data-no-drag
-          className="mb-2 flex flex-wrap gap-1 rounded bg-white/50 p-1"
+          className="mb-2 flex flex-wrap gap-1 rounded-xl border-2 border-ink/20 bg-white/60 p-1.5"
         >
           {NOTE_COLORS.map((c) => (
             <button
@@ -202,7 +316,7 @@ export default function NoteCard({
                 onPatch(note.id, { color: c })
                 setShowPalette(false)
               }}
-              className="h-5 w-5 rounded-full ring-1 ring-black/20"
+              className="h-6 w-6 rounded-full border-2 border-ink/60 transition hover:scale-110"
               style={{ backgroundColor: c }}
             />
           ))}
@@ -213,7 +327,7 @@ export default function NoteCard({
         <img
           src={note.image_url}
           alt=""
-          className="mb-2 max-h-40 w-full rounded object-cover"
+          className="mb-2 max-h-40 w-full rounded-xl border-2 border-ink/20 object-cover"
           draggable={false}
         />
       )}
@@ -224,18 +338,21 @@ export default function NoteCard({
           data-no-drag
           autoFocus
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            emit('editing', { text: e.target.value })
+          }}
           onBlur={commitText}
-          className="min-h-[60px] flex-1 resize-none rounded bg-white/40 p-1 text-sm outline-none"
+          className="min-h-[48px] flex-1 resize-none rounded-lg bg-white/40 p-1.5 font-body text-sm font-semibold outline-none"
         />
       ) : (
         <p
           data-no-drag={canEdit ? true : undefined}
           onClick={() => canEdit && setEditing(true)}
-          className="flex-1 whitespace-pre-wrap break-words text-sm"
+          className="flex-1 overflow-auto whitespace-pre-wrap break-words font-body text-sm font-semibold"
         >
           {note.text || (
-            <span className="italic text-slate-500">
+            <span className="italic text-ink/40">
               {canEdit ? 'Click to add text…' : ''}
             </span>
           )}
@@ -247,15 +364,15 @@ export default function NoteCard({
         {note.tags.map((tag) => (
           <span
             key={tag}
-            className="group inline-flex items-center gap-1 rounded-full bg-black/10 px-2 py-0.5 text-[11px]"
+            className="inline-flex items-center gap-1 rounded-full border-2 border-ink/30 bg-white/60 px-2 py-0.5 font-display text-[11px] font-bold"
           >
             #{tag}
             {canEdit && (
               <button
                 onClick={() => removeTag(tag)}
-                className="text-slate-600 hover:text-red-600"
+                className="text-ink/50 hover:text-coral"
               >
-                ×
+                <X className="h-3 w-3" strokeWidth={3} />
               </button>
             )}
           </span>
@@ -272,10 +389,22 @@ export default function NoteCard({
             }}
             onBlur={addTag}
             placeholder="+tag"
-            className="w-14 rounded-full bg-white/40 px-2 py-0.5 text-[11px] outline-none placeholder:text-slate-500"
+            className="w-14 rounded-full bg-white/40 px-2 py-0.5 font-body text-[11px] font-semibold outline-none placeholder:text-ink/40"
           />
         )}
       </div>
+
+      {/* Resize handle */}
+      {canEdit && (
+        <button
+          data-no-drag
+          onPointerDown={handleResizeDown}
+          title="Drag to resize"
+          className="absolute -bottom-1 -right-1 flex h-6 w-6 cursor-nwse-resize items-center justify-center rounded-full border-2 border-ink/70 bg-white text-ink/70 shadow-pop-sm hover:text-ink"
+        >
+          <MoveDiagonal2 className="h-3.5 w-3.5" strokeWidth={2.5} />
+        </button>
+      )}
     </div>
   )
 }

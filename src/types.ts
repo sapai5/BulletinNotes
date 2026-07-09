@@ -49,3 +49,38 @@ export interface Note {
 export interface BoardWithRole extends Board {
   role: BoardRole
 }
+
+export type FriendshipStatus = 'pending' | 'accepted'
+
+export interface Friendship {
+  id: string
+  requester_id: string
+  addressee_id: string
+  status: FriendshipStatus
+  created_at: string
+}
+
+// A friendship row joined with the *other* person's profile, plus a computed
+// direction so the UI knows whether a pending request is incoming or outgoing.
+export interface FriendEntry {
+  friendshipId: string
+  status: FriendshipStatus
+  direction: 'incoming' | 'outgoing' | 'friend'
+  profile: Profile
+}
+
+// Live activity broadcast over a board's realtime channel (ephemeral).
+export interface GhostActivity {
+  userId: string
+  name: string
+  avatarUrl: string | null
+  noteId: string
+  x: number
+  y: number
+  width: number
+  height: number
+  color: string
+  text: string
+  kind: 'creating' | 'editing' | 'moving' | 'resizing'
+  at: number
+}

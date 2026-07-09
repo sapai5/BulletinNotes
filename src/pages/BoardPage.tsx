@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft, Plus, Users, StickyNote } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import type { Board, Note } from '../types'
 import { NOTE_COLORS } from '../components/NoteCard'
 import NoteCard from '../components/NoteCard'
+import GhostNote from '../components/GhostNote'
+import Avatar from '../components/Avatar'
 import MembersDialog from '../components/MembersDialog'
 import AppHeader from '../components/AppHeader'
 import Spinner from '../components/Spinner'
+import { useBoardCollab } from '../hooks/useBoardCollab'
 
 export default function BoardPage() {
   const { boardId } = useParams<{ boardId: string }>()
@@ -25,20 +29,31 @@ export default function BoardPage() {
 
   const isOwner = board?.owner_id === user?.id
 
+  const { viewers, ghosts, emitActivity, emitActivityEnd } =
+    useBoardCollab(boardId)
+
   // ---- Loading -------------------------------------------------------------
   const loadAuthors = useCallback(async () => {
     if (!boardId) return
-    const { data } = await supabase
+    // board_members has no direct FK to profiles (both reference auth.users),
+    // so we can't embed profiles — fetch the member ids, then their profiles.
+    const { data: members } = await supabase
       .from('board_members')
-      .select('user_id, profile:profiles(display_name, email)')
+      .select('user_id')
       .eq('board_id', boardId)
+    const ids = (members ?? []).map((m) => m.user_id as string)
+    if (!ids.length) {
+      setAuthorNames({})
+      return
+    }
+    const { data: profs } = await supabase
+      .from('profiles')
+      .select('id, display_name, email')
+      .in('id', ids)
     const map: Record<string, string> = {}
-    for (const row of data ?? []) {
-      const p = row.profile as unknown as {
-        display_name: string | null
-        email: string
-      } | null
-      map[row.user_id as string] = p?.display_name || p?.email || 'Someone'
+    for (const p of profs ?? []) {
+      const prof = p as { id: string; display_name: string | null; email: string }
+      map[prof.id] = prof.display_name || prof.email || 'Someone'
     }
     setAuthorNames(map)
   }, [boardId])
@@ -139,7 +154,6 @@ export default function BoardPage() {
 
   async function addNote() {
     if (!boardId || !user) return
-    // Place near the current scroll position with a little jitter.
     const el = scrollRef.current
     const baseX = (el?.scrollLeft ?? 0) + 60 + Math.random() * 40
     const baseY = (el?.scrollTop ?? 0) + 60 + Math.random() * 40
@@ -163,7 +177,6 @@ export default function BoardPage() {
       setError(error.message)
       return
     }
-    // Optimistically add (realtime may also deliver it; we dedupe by id).
     setNotes((prev) =>
       prev.some((p) => p.id === data.id) ? prev : [...prev, data as Note],
     )
@@ -188,6 +201,11 @@ export default function BoardPage() {
     persist(id, { x, y })
   }
 
+  function handleResize(id: string, width: number, height: number) {
+    patchLocal(id, { width, height })
+    persist(id, { width, height })
+  }
+
   function handleBringToFront(id: string) {
     const newZ = maxZ + 1
     patchLocal(id, { z_index: newZ })
@@ -203,7 +221,7 @@ export default function BoardPage() {
   // ---- Render --------------------------------------------------------------
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center bg-slate-900">
+      <div className="flex h-full items-center justify-center bg-cream">
         <Spinner label="Loading board…" />
       </div>
     )
@@ -211,13 +229,15 @@ export default function BoardPage() {
 
   if (error && !board) {
     return (
-      <div className="min-h-full bg-slate-900 text-white">
+      <div className="min-h-full bg-cream text-ink">
         <AppHeader />
         <div className="mx-auto max-w-md px-4 py-20 text-center">
-          <p className="mb-4 text-slate-300">{error}</p>
+          <p className="mb-4 font-display text-lg font-semibold text-ink/70">
+            {error}
+          </p>
           <button
             onClick={() => navigate('/')}
-            className="rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-900"
+            className="btn-pop bg-coral px-4 py-2.5 text-white"
           >
             Back to boards
           </button>
@@ -227,61 +247,79 @@ export default function BoardPage() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-slate-900 text-white">
+    <div className="flex h-full flex-col bg-cream text-ink">
       <AppHeader>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => navigate('/')}
-            className="text-slate-400 hover:text-white"
+            className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-ink bg-white shadow-pop-sm transition active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
             title="Back to boards"
           >
-            ←
+            <ArrowLeft className="h-4 w-4" strokeWidth={2.5} />
           </button>
-          <h1 className="truncate text-base font-semibold">{board?.name}</h1>
+          <h1 className="truncate font-display text-lg font-bold">
+            {board?.name}
+          </h1>
         </div>
       </AppHeader>
 
       {/* Toolbar */}
-      <div className="flex items-center gap-2 border-b border-white/10 bg-slate-900/80 px-4 py-2">
-        <button
-          onClick={addNote}
-          className="rounded-lg bg-amber-400 px-3 py-1.5 text-sm font-semibold text-slate-900 hover:bg-amber-300"
-        >
-          + Add note
+      <div className="flex items-center gap-2 border-b-2 border-ink/10 bg-cream/90 px-4 py-2.5">
+        <button onClick={addNote} className="btn-pop bg-coral px-3 py-1.5 text-sm text-white">
+          <Plus className="h-4 w-4" strokeWidth={3} />
+          Add note
         </button>
         <button
           onClick={() => setShowMembers(true)}
-          className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800"
+          className="btn-pop bg-white px-3 py-1.5 text-sm"
         >
-          👥 Members
+          <Users className="h-4 w-4" strokeWidth={2.5} />
+          Members
         </button>
-        <span className="ml-auto text-xs text-slate-500">
+        <span className="ml-auto font-display text-xs font-bold text-ink/50">
           {notes.length} note{notes.length === 1 ? '' : 's'}
         </span>
+        {viewers.length > 0 && (
+          <div className="flex items-center -space-x-2" title="Here now">
+            {viewers.slice(0, 5).map((v) => (
+              <div key={v.userId} className="ring-2 ring-cream rounded-full">
+                <Avatar
+                  name={v.name}
+                  avatarUrl={v.avatarUrl}
+                  size={28}
+                  online
+                />
+              </div>
+            ))}
+            {viewers.length > 5 && (
+              <span className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-ink bg-white font-display text-[10px] font-bold">
+                +{viewers.length - 5}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {error && (
-        <p className="bg-red-500/10 px-4 py-1.5 text-sm text-red-400">
+        <p className="bg-coral/20 px-4 py-1.5 font-body text-sm font-semibold text-ink">
           {error}
         </p>
       )}
 
       {/* Canvas */}
-      <div
-        ref={scrollRef}
-        className="relative flex-1 overflow-auto bg-slate-950/40"
-        style={{
-          backgroundImage:
-            'radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)',
-          backgroundSize: '24px 24px',
-        }}
-      >
-        {/* Large scrollable surface so notes can be spread out. */}
+      <div ref={scrollRef} className="corkboard relative flex-1 overflow-auto">
         <div className="relative" style={{ width: 3000, height: 2000 }}>
           {notes.length === 0 && (
-            <div className="pointer-events-none absolute left-1/2 top-40 -translate-x-1/2 text-center text-slate-500">
-              <p className="text-lg">This board is empty.</p>
-              <p className="text-sm">Click “+ Add note” to pin your first note.</p>
+            <div className="pointer-events-none absolute left-1/2 top-40 -translate-x-1/2 text-center">
+              <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-3xl border-2 border-ink bg-white shadow-pop animate-float">
+                <StickyNote className="h-8 w-8 text-coral" strokeWidth={2.5} />
+              </div>
+              <p className="font-display text-xl font-bold text-white drop-shadow">
+                This board is empty!
+              </p>
+              <p className="font-body font-semibold text-white/90 drop-shadow">
+                Hit “Add note” to pin your first one.
+              </p>
             </div>
           )}
           {notes.map((note) => (
@@ -291,10 +329,18 @@ export default function BoardPage() {
               canEdit={note.author_id === user?.id}
               authorName={authorNames[note.author_id] ?? 'Someone'}
               onMove={handleMove}
+              onResize={handleResize}
               onBringToFront={handleBringToFront}
               onPatch={handlePatch}
               onDelete={handleDelete}
+              onActivity={emitActivity}
+              onActivityEnd={emitActivityEnd}
             />
+          ))}
+
+          {/* Live "shadows" of what other viewers are doing right now. */}
+          {Object.values(ghosts).map((g) => (
+            <GhostNote key={g.userId} ghost={g} />
           ))}
         </div>
       </div>

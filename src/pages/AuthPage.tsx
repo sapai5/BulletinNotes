@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Pin, Mail, Lock, User, Sparkles } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 type Mode = 'signin' | 'signup'
@@ -28,9 +29,7 @@ export default function AuthPage() {
           displayName.trim() || email.split('@')[0],
         )
         if (needsConfirmation) {
-          setInfo(
-            'Check your inbox to confirm your email, then sign in.',
-          )
+          setInfo('Check your inbox to confirm your email, then sign in.')
           setMode('signin')
         }
       }
@@ -46,7 +45,6 @@ export default function AuthPage() {
     setBusy(true)
     try {
       await signInWithGoogle()
-      // Redirect happens; nothing else to do here.
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google sign-in failed')
       setBusy(false)
@@ -54,19 +52,23 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-4">
-      <div className="w-full max-w-sm rounded-2xl bg-slate-800/80 p-8 shadow-xl ring-1 ring-white/10 backdrop-blur">
+    <div className="flex min-h-full items-center justify-center bg-gradient-to-br from-peach via-bubble to-sky p-4">
+      {/* floating decorative blobs */}
+      <div className="pointer-events-none absolute left-10 top-16 h-24 w-24 rotate-12 rounded-blob bg-lemon/70 shadow-pop animate-float" />
+      <div className="pointer-events-none absolute bottom-16 right-12 h-20 w-20 -rotate-6 rounded-blob bg-mint/70 shadow-pop animate-float [animation-delay:1s]" />
+
+      <div className="relative w-full max-w-sm animate-pop rounded-blob border-2 border-ink bg-cream p-8 shadow-pop-lg">
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-amber-300 text-2xl">
-            📌
+          <div className="mx-auto mb-3 flex h-16 w-16 -rotate-6 items-center justify-center rounded-3xl border-2 border-ink bg-coral shadow-pop">
+            <Pin className="h-8 w-8 text-white" strokeWidth={2.5} />
           </div>
-          <h1 className="text-xl font-semibold text-white">
+          <h1 className="font-display text-2xl font-bold text-ink">
             Bulletin Board Notes
           </h1>
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="mt-1 font-body text-sm font-semibold text-ink/60">
             {mode === 'signin'
-              ? 'Sign in to your boards'
-              : 'Create your account'}
+              ? 'Welcome back! Sign in to your boards'
+              : 'Join the fun — make your account'}
           </p>
         </div>
 
@@ -74,54 +76,63 @@ export default function AuthPage() {
           type="button"
           onClick={handleGoogle}
           disabled={busy}
-          className="mb-4 flex w-full items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-60"
+          className="btn-pop mb-4 w-full bg-white px-4 py-3 text-sm"
         >
           <GoogleIcon />
           Continue with Google
         </button>
 
-        <div className="mb-4 flex items-center gap-3 text-xs text-slate-500">
-          <div className="h-px flex-1 bg-slate-600" />
+        <div className="mb-4 flex items-center gap-3 font-display text-xs font-semibold text-ink/40">
+          <div className="h-0.5 flex-1 rounded-full bg-ink/15" />
           or
-          <div className="h-px flex-1 bg-slate-600" />
+          <div className="h-0.5 flex-1 rounded-full bg-ink/15" />
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3">
           {mode === 'signup' && (
-            <input
+            <Field
+              icon={<User className="h-4 w-4" strokeWidth={2.5} />}
               type="text"
               placeholder="Display name"
               value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+              onChange={setDisplayName}
             />
           )}
-          <input
+          <Field
+            icon={<Mail className="h-4 w-4" strokeWidth={2.5} />}
             type="email"
             required
             placeholder="Email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+            onChange={setEmail}
           />
-          <input
+          <Field
+            icon={<Lock className="h-4 w-4" strokeWidth={2.5} />}
             type="password"
             required
             minLength={6}
             placeholder="Password (min 6 chars)"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+            onChange={setPassword}
           />
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
-          {info && <p className="text-sm text-emerald-400">{info}</p>}
+          {error && (
+            <p className="rounded-2xl border-2 border-ink/10 bg-coral/20 px-3 py-2 font-body text-sm font-semibold text-ink">
+              {error}
+            </p>
+          )}
+          {info && (
+            <p className="rounded-2xl border-2 border-ink/10 bg-mint/40 px-3 py-2 font-body text-sm font-semibold text-ink">
+              {info}
+            </p>
+          )}
 
           <button
             type="submit"
             disabled={busy}
-            className="w-full rounded-lg bg-amber-400 px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-amber-300 disabled:opacity-60"
+            className="btn-pop w-full bg-coral px-4 py-3 text-base text-white"
           >
+            <Sparkles className="h-4 w-4" strokeWidth={2.5} />
             {busy
               ? 'Please wait…'
               : mode === 'signin'
@@ -130,7 +141,7 @@ export default function AuthPage() {
           </button>
         </form>
 
-        <p className="mt-5 text-center text-sm text-slate-400">
+        <p className="mt-5 text-center font-body text-sm font-semibold text-ink/60">
           {mode === 'signin' ? "Don't have an account? " : 'Already have one? '}
           <button
             type="button"
@@ -139,12 +150,35 @@ export default function AuthPage() {
               setError(null)
               setInfo(null)
             }}
-            className="font-medium text-amber-400 hover:underline"
+            className="font-display font-bold text-coral underline decoration-wavy underline-offset-2 hover:text-ink"
           >
             {mode === 'signin' ? 'Sign up' : 'Sign in'}
           </button>
         </p>
       </div>
+    </div>
+  )
+}
+
+function Field({
+  icon,
+  value,
+  onChange,
+  ...rest
+}: {
+  icon: React.ReactNode
+  value: string
+  onChange: (v: string) => void
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value'>) {
+  return (
+    <div className="flex items-center gap-2 rounded-2xl border-2 border-ink bg-white px-3 py-2.5 shadow-pop-sm focus-within:-translate-y-0.5 focus-within:shadow-pop">
+      <span className="text-ink/50">{icon}</span>
+      <input
+        {...rest}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-transparent font-body text-sm font-semibold text-ink placeholder-ink/40 focus:outline-none"
+      />
     </div>
   )
 }

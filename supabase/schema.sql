@@ -56,6 +56,19 @@ create table if not exists public.notes (
 create index if not exists notes_board_id_idx on public.notes (board_id);
 create index if not exists board_members_user_id_idx on public.board_members (user_id);
 
+create table if not exists public.friendships (
+  id uuid primary key default gen_random_uuid(),
+  requester_id uuid not null references auth.users (id) on delete cascade,
+  addressee_id uuid not null references auth.users (id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'accepted')),
+  created_at timestamptz not null default now(),
+  unique (requester_id, addressee_id),
+  check (requester_id <> addressee_id)
+);
+
+create index if not exists friendships_addressee_idx on public.friendships (addressee_id);
+create index if not exists friendships_requester_idx on public.friendships (requester_id);
+
 -- ----------------------------------------------------------------------------
 -- Profile auto-creation trigger
 -- ----------------------------------------------------------------------------
@@ -143,9 +156,10 @@ alter table public.profiles enable row level security;
 alter table public.boards enable row level security;
 alter table public.board_members enable row level security;
 alter table public.notes enable row level security;
+alter table public.friendships enable row level security;
 
--- profiles: you can read your own profile and the profiles of people who
--- share at least one board with you.
+-- profiles: you can read your own profile, the profiles of people who share at
+-- least one board with you, and the profiles of your friends (any status).
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles
   for select to authenticated
@@ -156,6 +170,11 @@ create policy profiles_select on public.profiles
       from public.board_members mine
       join public.board_members theirs on mine.board_id = theirs.board_id
       where mine.user_id = auth.uid() and theirs.user_id = profiles.id
+    )
+    or exists (
+      select 1 from public.friendships f
+      where (f.requester_id = auth.uid() and f.addressee_id = profiles.id)
+         or (f.addressee_id = auth.uid() and f.requester_id = profiles.id)
     )
   );
 
@@ -346,6 +365,125 @@ create policy note_images_delete on storage.objects
   );
 
 -- ----------------------------------------------------------------------------
+-- Friendships policies
+-- ----------------------------------------------------------------------------
+drop policy if exists friendships_select on public.friendships;
+create policy friendships_select on public.friendships
+  for select to authenticated
+  using (requester_id = auth.uid() or addressee_id = auth.uid());
+
+drop policy if exists friendships_insert on public.friendships;
+create policy friendships_insert on public.friendships
+  for insert to authenticated
+  with check (requester_id = auth.uid());
+
+drop policy if exists friendships_update_addressee on public.friendships;
+create policy friendships_update_addressee on public.friendships
+  for update to authenticated
+  using (addressee_id = auth.uid())
+  with check (addressee_id = auth.uid());
+
+drop policy if exists friendships_delete on public.friendships;
+create policy friendships_delete on public.friendships
+  for delete to authenticated
+  using (requester_id = auth.uid() or addressee_id = auth.uid());
+
+-- Friend-request RPC: add by email, auto-accepting a reciprocal pending request.
+create or replace function public.send_friend_request_by_email(_email text)
+returns public.friendships
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me uuid := auth.uid();
+  target_id uuid;
+  existing public.friendships;
+  result public.friendships;
+begin
+  if me is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select id into target_id
+  from public.profiles
+  where lower(email) = lower(trim(_email))
+  limit 1;
+
+  if target_id is null then
+    raise exception 'No user found with email %. They must sign up first.', _email;
+  end if;
+
+  if target_id = me then
+    raise exception 'You cannot add yourself';
+  end if;
+
+  select * into existing
+  from public.friendships
+  where (requester_id = me and addressee_id = target_id)
+     or (requester_id = target_id and addressee_id = me)
+  limit 1;
+
+  if existing.id is not null then
+    if existing.status = 'accepted' then
+      raise exception 'You are already friends';
+    end if;
+    if existing.requester_id = me then
+      raise exception 'Friend request already sent';
+    else
+      update public.friendships
+        set status = 'accepted'
+        where id = existing.id
+        returning * into result;
+      return result;
+    end if;
+  end if;
+
+  insert into public.friendships (requester_id, addressee_id, status)
+  values (me, target_id, 'pending')
+  returning * into result;
+
+  return result;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- Avatars storage bucket (profile pictures)
+-- ----------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true)
+on conflict (id) do nothing;
+
+drop policy if exists avatars_read on storage.objects;
+create policy avatars_read on storage.objects
+  for select to authenticated, anon
+  using (bucket_id = 'avatars');
+
+drop policy if exists avatars_insert on storage.objects;
+create policy avatars_insert on storage.objects
+  for insert to authenticated
+  with check (
+    bucket_id = 'avatars'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists avatars_update on storage.objects;
+create policy avatars_update on storage.objects
+  for update to authenticated
+  using (
+    bucket_id = 'avatars'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists avatars_delete on storage.objects;
+create policy avatars_delete on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id = 'avatars'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+-- ----------------------------------------------------------------------------
 -- Realtime: broadcast changes for notes and membership
 -- ----------------------------------------------------------------------------
 do $$
@@ -364,6 +502,14 @@ begin
       and schemaname = 'public' and tablename = 'board_members'
   ) then
     alter publication supabase_realtime add table public.board_members;
+  end if;
+
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public' and tablename = 'friendships'
+  ) then
+    alter publication supabase_realtime add table public.friendships;
   end if;
 end $$;
 

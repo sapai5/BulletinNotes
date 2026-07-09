@@ -1,13 +1,34 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import {
+  Plus,
+  StickyNote,
+  Crown,
+  Users,
+  Trash2,
+  LogOut,
+  Sparkles,
+} from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { useUI } from '../context/UIContext'
 import type { BoardWithRole } from '../types'
 import Spinner from '../components/Spinner'
 import AppHeader from '../components/AppHeader'
 
+// Rotating set of pastel backgrounds so each board card feels unique.
+const CARD_TINTS = [
+  'bg-lemon',
+  'bg-mint',
+  'bg-bubble',
+  'bg-sky',
+  'bg-grape',
+  'bg-peach',
+]
+
 export default function BoardsPage() {
   const { user } = useAuth()
+  const { confirm, toast } = useUI()
   const [boards, setBoards] = useState<BoardWithRole[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -15,11 +36,14 @@ export default function BoardsPage() {
   const [creating, setCreating] = useState(false)
 
   const loadBoards = useCallback(async () => {
+    if (!user) return
     setError(null)
-    // Fetch memberships joined with their board rows.
+    // Only MY membership rows. Without this filter, RLS also returns other
+    // members of boards I belong to, which would duplicate boards in the list.
     const { data, error } = await supabase
       .from('board_members')
       .select('role, board:boards(*)')
+      .eq('user_id', user.id)
       .order('created_at', { ascending: true })
 
     if (error) {
@@ -41,7 +65,7 @@ export default function BoardsPage() {
       })
     setBoards(rows)
     setLoading(false)
-  }, [])
+  }, [user])
 
   useEffect(() => {
     loadBoards()
@@ -64,41 +88,52 @@ export default function BoardsPage() {
   }
 
   async function handleDelete(board: BoardWithRole) {
-    if (
-      !confirm(
-        `Delete board "${board.name}"? This removes all its notes for everyone and cannot be undone.`,
-      )
-    )
-      return
+    const ok = await confirm({
+      title: `Delete "${board.name}"?`,
+      message:
+        'This removes all its notes for everyone and cannot be undone.',
+      confirmText: 'Delete',
+      danger: true,
+    })
+    if (!ok) return
     const { error } = await supabase.from('boards').delete().eq('id', board.id)
     if (error) {
-      setError(error.message)
+      toast(error.message, 'error')
       return
     }
+    toast('Board deleted', 'success')
     loadBoards()
   }
 
   async function handleLeave(board: BoardWithRole) {
-    if (!confirm(`Leave board "${board.name}"?`)) return
+    const ok = await confirm({
+      title: `Leave "${board.name}"?`,
+      message: "You'll lose access until someone invites you again.",
+      confirmText: 'Leave',
+      danger: true,
+    })
+    if (!ok) return
     const { error } = await supabase
       .from('board_members')
       .delete()
       .eq('board_id', board.id)
       .eq('user_id', user!.id)
     if (error) {
-      setError(error.message)
+      toast(error.message, 'error')
       return
     }
+    toast('Left board', 'success')
     loadBoards()
   }
 
   return (
-    <div className="min-h-full bg-slate-900 text-white">
+    <div className="min-h-full bg-gradient-to-br from-cream via-bubble/30 to-sky/30 text-ink">
       <AppHeader />
       <main className="mx-auto max-w-4xl px-4 py-8">
-        <h1 className="mb-1 text-2xl font-bold">Your boards</h1>
-        <p className="mb-6 text-sm text-slate-400">
-          Create a board, then invite people to pin notes together.
+        <h1 className="mb-1 font-display text-3xl font-bold">Your boards</h1>
+        <p className="mb-6 flex items-center gap-1.5 font-body font-semibold text-ink/60">
+          Make a board, then invite pals to pin notes together
+          <Sparkles className="h-4 w-4 text-coral" strokeWidth={2.5} />
         </p>
 
         <form
@@ -111,19 +146,20 @@ export default function BoardsPage() {
             onChange={(e) => setNewName(e.target.value)}
             placeholder="New board name…"
             maxLength={120}
-            className="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+            className="flex-1 rounded-2xl border-2 border-ink bg-white px-4 py-3 font-body font-semibold text-ink placeholder-ink/40 shadow-pop-sm focus:-translate-y-0.5 focus:shadow-pop focus:outline-none"
           />
           <button
             type="submit"
             disabled={creating || !newName.trim()}
-            className="rounded-lg bg-amber-400 px-5 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-amber-300 disabled:opacity-50"
+            className="btn-pop bg-coral px-5 py-3 text-white"
           >
+            <Plus className="h-5 w-5" strokeWidth={3} />
             {creating ? 'Creating…' : 'Create board'}
           </button>
         </form>
 
         {error && (
-          <p className="mb-4 rounded-lg bg-red-500/10 px-4 py-2 text-sm text-red-400">
+          <p className="mb-4 rounded-2xl border-2 border-ink/10 bg-coral/20 px-4 py-2 font-body font-semibold">
             {error}
           </p>
         )}
@@ -133,32 +169,51 @@ export default function BoardsPage() {
             <Spinner label="Loading boards…" />
           </div>
         ) : boards.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-700 py-16 text-center text-slate-400">
-            No boards yet. Create your first one above.
+          <div className="flex flex-col items-center gap-3 rounded-blob border-4 border-dashed border-ink/20 py-16 text-center">
+            <Sparkles className="h-10 w-10 text-coral animate-float" />
+            <p className="font-display text-lg font-semibold text-ink/70">
+              No boards yet — create your first one above!
+            </p>
           </div>
         ) : (
-          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {boards.map((board) => {
+          <ul className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {boards.map((board, i) => {
               const isOwner = board.role === 'owner'
+              const tint = CARD_TINTS[i % CARD_TINTS.length]
               return (
                 <li
                   key={board.id}
-                  className="group relative rounded-xl bg-slate-800 p-5 ring-1 ring-white/5 transition hover:ring-amber-400/40"
+                  className={`group relative rounded-blob border-2 border-ink ${tint} p-5 shadow-pop transition hover:-translate-y-1 hover:rotate-1 hover:shadow-pop-lg`}
                 >
                   <Link to={`/boards/${board.id}`} className="block">
                     <div className="mb-8 flex items-start justify-between">
-                      <span className="text-2xl">📋</span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                          isOwner
-                            ? 'bg-amber-400/20 text-amber-300'
-                            : 'bg-sky-400/20 text-sky-300'
-                        }`}
-                      >
-                        {isOwner ? 'Owner' : 'Member'}
+                      <span className="flex h-11 w-11 -rotate-6 items-center justify-center rounded-2xl border-2 border-ink bg-white shadow-pop-sm">
+                        <StickyNote
+                          className="h-6 w-6 text-ink"
+                          strokeWidth={2.5}
+                        />
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full border-2 border-ink bg-white px-2.5 py-1 font-display text-xs font-bold">
+                        {isOwner ? (
+                          <>
+                            <Crown
+                              className="h-3.5 w-3.5 text-coral"
+                              strokeWidth={2.5}
+                            />
+                            Owner
+                          </>
+                        ) : (
+                          <>
+                            <Users
+                              className="h-3.5 w-3.5"
+                              strokeWidth={2.5}
+                            />
+                            Member
+                          </>
+                        )}
                       </span>
                     </div>
-                    <h2 className="truncate text-lg font-semibold">
+                    <h2 className="truncate font-display text-xl font-bold">
                       {board.name}
                     </h2>
                   </Link>
@@ -166,9 +221,19 @@ export default function BoardsPage() {
                     onClick={() =>
                       isOwner ? handleDelete(board) : handleLeave(board)
                     }
-                    className="mt-3 text-xs text-slate-500 hover:text-red-400"
+                    className="mt-3 inline-flex items-center gap-1 font-body text-xs font-bold text-ink/50 hover:text-coral"
                   >
-                    {isOwner ? 'Delete board' : 'Leave board'}
+                    {isOwner ? (
+                      <>
+                        <Trash2 className="h-3.5 w-3.5" strokeWidth={2.5} />
+                        Delete board
+                      </>
+                    ) : (
+                      <>
+                        <LogOut className="h-3.5 w-3.5" strokeWidth={2.5} />
+                        Leave board
+                      </>
+                    )}
                   </button>
                 </li>
               )

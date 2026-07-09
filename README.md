@@ -10,10 +10,13 @@ backed by **Supabase** (Postgres, Auth, Storage, Realtime).
 - 🔐 **Sign in** with Google **or** email + password (your choice)
 - 🗂️ Create **unlimited boards**, each with its own notes
 - ✉️ **Invite members by email**; share a board with anyone who has signed up
-- 📝 **Freeform draggable notes** you can place anywhere on a large canvas
+- 📝 **Freeform draggable + resizable notes** you can place anywhere on a large canvas
 - 🎨 Per-note **color picker**, **#tags**, and **image uploads**
+- 👤 **Profile page** — set a username (shown to everyone) and upload a profile picture
+- 🧑‍🤝‍🧑 **Friends tab** — add friends by email, accept/decline requests, and see who's **online right now**
+- 👀 **Live "shadows"** — on a shared board you see a real-time ghost of what others are typing / moving / resizing, plus avatars of who's viewing
 - ⚡ **Realtime sync** — notes others add/move/edit appear instantly
-- 📲 **Installable** to your desktop/phone home screen (PWA), works offline-first for the app shell
+- 📲 **Installable** to your desktop/phone home screen (PWA)
 - 🛡️ **Row-Level Security**: you only see boards you own or were invited to; only a note's author can edit it
 
 ---
@@ -35,9 +38,15 @@ backed by **Supabase** (Postgres, Auth, Storage, Realtime).
 1. In the Supabase dashboard, open **SQL Editor → New query**.
 2. Paste the entire contents of [`supabase/schema.sql`](./supabase/schema.sql) and click **Run**.
 
-This creates all tables (`profiles`, `boards`, `board_members`, `notes`), the
-Row-Level Security policies, the `note-images` storage bucket, the invite RPC,
-and enables Realtime. It's safe to re-run if you change something.
+This creates all tables (`profiles`, `boards`, `board_members`, `notes`,
+`friendships`), the Row-Level Security policies, the `note-images` and
+`avatars` storage buckets, the invite / friend-request RPCs, and enables
+Realtime. It's safe to re-run if you change something.
+
+> **Already ran an older `schema.sql`?** If you set the app up before the
+> profiles/friends update, just run [`supabase/002_friends_and_profiles.sql`](./supabase/002_friends_and_profiles.sql)
+> to add the `avatars` bucket, the `friendships` table, and the friend RPC.
+> (Re-running the full `schema.sql` also works.)
 
 ## 4. Configure authentication
 
@@ -125,10 +134,11 @@ build output.
 
 | Table | Purpose |
 |---|---|
-| `profiles` | Mirrors `auth.users` (auto-populated by a trigger) so people can be looked up by email for invites. |
+| `profiles` | Mirrors `auth.users` (auto-populated by a trigger). Holds your username (`display_name`) and `avatar_url`. |
 | `boards` | A bulletin board owned by one user. |
 | `board_members` | Who can access a board and their role (`owner` / `editor`). |
 | `notes` | A sticky note: text, color, tags, image URL, position (`x`,`y`), size, and `z_index`. |
+| `friendships` | Friend links between users (`pending` → `accepted`). |
 
 ### Security model
 
@@ -149,24 +159,47 @@ listens for `INSERT`/`UPDATE`/`DELETE` on `notes` (and membership changes), so
 collaborators see changes without refreshing. Local edits are applied
 optimistically and de-duplicated by note `id`.
 
+On top of that, three realtime mechanisms power presence and live collaboration:
+
+- **Global presence** (`PresenceProvider`) — every signed-in client joins one
+  `online-users` channel and tracks itself, so the Friends tab can show who is
+  online.
+- **Board presence** (`useBoardCollab`) — a per-board `board-collab-<id>`
+  channel tracks who is currently *viewing* the board (the avatar stack in the
+  toolbar).
+- **Live "shadows"** — the same board channel *broadcasts* ephemeral `activity`
+  events while you type, drag, or resize a note (throttled). Other viewers
+  render a translucent `GhostNote` with your name and live content. Nothing is
+  persisted until you finish; missed "end" events expire after 5s.
+
 ## Project structure
 
 ```
-supabase/schema.sql        # Run this in Supabase SQL editor
-scripts/gen_icons.py       # Regenerates the PWA PNG icons (stdlib only)
+supabase/schema.sql                    # Full setup — run this in Supabase SQL editor
+supabase/002_friends_and_profiles.sql  # Incremental migration (avatars + friends)
+scripts/gen_icons.py                   # Regenerates the PWA PNG icons (stdlib only)
 src/
-  lib/supabase.ts          # Supabase client + bucket name
-  context/AuthContext.tsx  # Session + auth actions (email/password, Google)
+  lib/supabase.ts          # Supabase client + bucket names
+  context/
+    AuthContext.tsx        # Session + auth actions (email/password, Google)
+    ProfileContext.tsx     # Current user's profile (username, avatar) + refresh
+    PresenceContext.tsx    # Global online-users presence
+  hooks/
+    useBoardCollab.ts      # Board presence (viewers) + live activity broadcast
   types.ts                 # Shared TypeScript types
   App.tsx                  # Auth-gated router
   pages/
     AuthPage.tsx           # Sign in / sign up
     BoardsPage.tsx         # Create / list / delete / leave boards
-    BoardPage.tsx          # The canvas + realtime + toolbar
+    BoardPage.tsx          # The canvas + realtime + ghosts + viewers
+    ProfilePage.tsx        # Edit username + upload avatar
+    FriendsPage.tsx        # Add friends, requests, online status
   components/
-    NoteCard.tsx           # Draggable, editable sticky note
+    NoteCard.tsx           # Draggable, resizable, editable sticky note
+    GhostNote.tsx          # Translucent live "shadow" of someone else's note
+    Avatar.tsx             # Picture or initial fallback + online dot
     MembersDialog.tsx      # Invite by email + roster
-    AppHeader.tsx
+    AppHeader.tsx          # Nav (Boards / Friends / Profile)
     Spinner.tsx
 ```
 

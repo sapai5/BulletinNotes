@@ -39,6 +39,9 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
+        // The heic-to converter is a large (~2MB) chunk that's lazily loaded
+        // only when a user uploads a HEIC image, so don't precache it.
+        globIgnores: ['**/heic-to-*.js'],
         // Never cache Supabase API/auth calls so data stays fresh.
         navigateFallbackDenylist: [/^\/auth/],
       },

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { X, UserPlus, Crown, Users, Info } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { useUI } from '../context/UIContext'
 import type { BoardMember, Profile } from '../types'
 
 interface Props {
@@ -19,6 +21,7 @@ export default function MembersDialog({
   currentUserId,
   onClose,
 }: Props) {
+  const { confirm } = useUI()
   const [members, setMembers] = useState<MemberRow[]>([])
   const [loading, setLoading] = useState(true)
   const [email, setEmail] = useState('')
@@ -29,18 +32,30 @@ export default function MembersDialog({
   const load = useCallback(async () => {
     const { data, error } = await supabase
       .from('board_members')
-      .select('board_id, user_id, role, created_at, profile:profiles(*)')
+      .select('board_id, user_id, role, created_at')
       .eq('board_id', boardId)
     if (error) {
       setError(error.message)
-    } else {
-      setMembers(
-        (data ?? []).map((m) => ({
-          ...(m as unknown as BoardMember),
-          profile: (m.profile as unknown as Profile) ?? null,
-        })),
+      setLoading(false)
+      return
+    }
+    const base = (data ?? []) as unknown as BoardMember[]
+    const ids = base.map((m) => m.user_id)
+
+    let profilesById: Record<string, Profile> = {}
+    if (ids.length) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('id', ids)
+      profilesById = Object.fromEntries(
+        (profs ?? []).map((p) => [(p as Profile).id, p as Profile]),
       )
     }
+
+    setMembers(
+      base.map((m) => ({ ...m, profile: profilesById[m.user_id] ?? null })),
+    )
     setLoading(false)
   }, [boardId])
 
@@ -71,7 +86,13 @@ export default function MembersDialog({
   }
 
   async function remove(userId: string) {
-    if (!confirm('Remove this member from the board?')) return
+    const ok = await confirm({
+      title: 'Remove this member?',
+      message: "They'll lose access to this board.",
+      confirmText: 'Remove',
+      danger: true,
+    })
+    if (!ok) return
     const { error } = await supabase
       .from('board_members')
       .delete()
@@ -86,21 +107,24 @@ export default function MembersDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-xl bg-slate-800 p-6 text-white ring-1 ring-white/10"
+        className="w-full max-w-md animate-pop rounded-blob border-2 border-ink bg-cream p-6 text-ink shadow-pop-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Members</h2>
+          <h2 className="flex items-center gap-2 font-display text-xl font-bold">
+            <Users className="h-5 w-5 text-coral" strokeWidth={2.5} />
+            Members
+          </h2>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white"
+            className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-ink bg-white shadow-pop-sm transition active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
             aria-label="Close"
           >
-            ✕
+            <X className="h-4 w-4" strokeWidth={2.5} />
           </button>
         </div>
 
@@ -112,63 +136,80 @@ export default function MembersDialog({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Invite by email…"
-              className="flex-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+              className="flex-1 rounded-2xl border-2 border-ink bg-white px-3 py-2 font-body text-sm font-semibold placeholder-ink/40 shadow-pop-sm focus:outline-none"
             />
             <button
               type="submit"
               disabled={busy}
-              className="rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-amber-300 disabled:opacity-50"
+              className="btn-pop bg-coral px-4 py-2 text-sm text-white"
             >
+              <UserPlus className="h-4 w-4" strokeWidth={2.5} />
               Invite
             </button>
           </form>
         )}
 
-        {error && <p className="mb-2 text-sm text-red-400">{error}</p>}
-        {info && <p className="mb-2 text-sm text-emerald-400">{info}</p>}
+        {error && (
+          <p className="mb-2 rounded-2xl border-2 border-ink/10 bg-coral/20 px-3 py-2 font-body text-sm font-semibold">
+            {error}
+          </p>
+        )}
+        {info && (
+          <p className="mb-2 rounded-2xl border-2 border-ink/10 bg-mint/40 px-3 py-2 font-body text-sm font-semibold">
+            {info}
+          </p>
+        )}
         {isOwner && (
-          <p className="mb-3 text-xs text-slate-500">
+          <p className="mb-3 flex items-start gap-1.5 font-body text-xs font-semibold text-ink/50">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2.5} />
             The person must have signed up at least once before you can invite
             them.
           </p>
         )}
 
         {loading ? (
-          <p className="text-sm text-slate-400">Loading…</p>
+          <p className="font-body text-sm font-semibold text-ink/50">Loading…</p>
         ) : (
           <ul className="space-y-2">
             {members.map((m) => (
               <li
                 key={m.user_id}
-                className="flex items-center justify-between rounded-lg bg-slate-900/60 px-3 py-2"
+                className="flex items-center justify-between rounded-2xl border-2 border-ink/15 bg-white/70 px-3 py-2"
               >
                 <div className="min-w-0">
-                  <p className="truncate text-sm">
+                  <p className="truncate font-display text-sm font-bold">
                     {m.profile?.display_name || m.profile?.email || m.user_id}
                     {m.user_id === currentUserId && (
-                      <span className="text-slate-500"> (you)</span>
+                      <span className="font-body font-semibold text-ink/40">
+                        {' '}
+                        (you)
+                      </span>
                     )}
                   </p>
                   {m.profile?.email && (
-                    <p className="truncate text-xs text-slate-500">
+                    <p className="truncate font-body text-xs font-semibold text-ink/50">
                       {m.profile.email}
                     </p>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs ${
-                      m.role === 'owner'
-                        ? 'bg-amber-400/20 text-amber-300'
-                        : 'bg-sky-400/20 text-sky-300'
-                    }`}
-                  >
-                    {m.role}
+                  <span className="inline-flex items-center gap-1 rounded-full border-2 border-ink/60 bg-white px-2 py-0.5 font-display text-xs font-bold">
+                    {m.role === 'owner' ? (
+                      <>
+                        <Crown
+                          className="h-3.5 w-3.5 text-coral"
+                          strokeWidth={2.5}
+                        />
+                        owner
+                      </>
+                    ) : (
+                      'editor'
+                    )}
                   </span>
                   {isOwner && m.role !== 'owner' && (
                     <button
                       onClick={() => remove(m.user_id)}
-                      className="text-xs text-slate-500 hover:text-red-400"
+                      className="font-body text-xs font-bold text-ink/40 hover:text-coral"
                     >
                       Remove
                     </button>
