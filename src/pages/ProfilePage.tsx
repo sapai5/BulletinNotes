@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { useProfile } from '../context/ProfileContext'
 import AppHeader from '../components/AppHeader'
 import Avatar from '../components/Avatar'
+import AvatarCropper from '../components/AvatarCropper'
 
 export default function ProfilePage() {
   const { user } = useAuth()
@@ -15,6 +16,7 @@ export default function ProfilePage() {
   const [uploading, setUploading] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [cropSrc, setCropSrc] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -45,17 +47,38 @@ export default function ProfilePage() {
     setTimeout(() => setSaved(false), 2000)
   }
 
-  async function handleAvatar(e: React.ChangeEvent<HTMLInputElement>) {
+  // Step 1: user picks a file → convert HEIC if needed → open the cropper.
+  async function handleFilePick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file || !user) return
+    setError(null)
+    setUploading(true)
+    try {
+      const { blob } = await prepareImageForUpload(file)
+      setCropSrc(URL.createObjectURL(blob))
+    } catch (err) {
+      setError('Could not load image: ' + errorMessage(err))
+    } finally {
+      setUploading(false)
+      e.target.value = ''
+    }
+  }
+
+  function closeCropper() {
+    if (cropSrc) URL.revokeObjectURL(cropSrc)
+    setCropSrc(null)
+  }
+
+  // Step 2: cropper returns the cropped blob → upload it.
+  async function handleCropped(blob: Blob) {
+    if (!user) return
     setUploading(true)
     setError(null)
     try {
-      const { blob, ext, contentType } = await prepareImageForUpload(file)
-      const path = `${user.id}/avatar-${Date.now()}.${ext}`
+      const path = `${user.id}/avatar-${Date.now()}.jpg`
       const { error: upErr } = await supabase.storage
         .from(AVATARS_BUCKET)
-        .upload(path, blob, { upsert: true, contentType })
+        .upload(path, blob, { upsert: true, contentType: 'image/jpeg' })
       if (upErr) throw upErr
       const { data } = supabase.storage.from(AVATARS_BUCKET).getPublicUrl(path)
       const { error: updErr } = await supabase
@@ -64,11 +87,11 @@ export default function ProfilePage() {
         .eq('id', user.id)
       if (updErr) throw updErr
       await refresh()
+      closeCropper()
     } catch (err) {
       setError('Upload failed: ' + errorMessage(err))
     } finally {
       setUploading(false)
-      e.target.value = ''
     }
   }
 
@@ -104,11 +127,11 @@ export default function ProfilePage() {
                 type="file"
                 accept="image/*"
                 className="hidden"
-                onChange={handleAvatar}
+                onChange={handleFilePick}
               />
             </div>
             <p className="font-body text-sm font-semibold text-ink/50">
-              Tap the camera to upload a picture
+              Tap the camera to upload &amp; crop a picture
             </p>
           </div>
 
@@ -150,6 +173,14 @@ export default function ProfilePage() {
           )}
         </div>
       </main>
+
+      {cropSrc && (
+        <AvatarCropper
+          imageSrc={cropSrc}
+          onCancel={closeCropper}
+          onCropped={handleCropped}
+        />
+      )}
     </div>
   )
 }
