@@ -17,7 +17,6 @@ import { supabase, NOTE_IMAGES_BUCKET } from '../lib/supabase'
 import { prepareImageForUpload, errorMessage } from '../lib/imageUpload'
 import { useUI } from '../context/UIContext'
 import type { ActivityInput } from '../hooks/useBoardCollab'
-import { CANVAS_W, CANVAS_H } from '../hooks/useBoardView'
 
 export const NOTE_COLORS = [
   '#fef08a', // yellow
@@ -38,9 +37,7 @@ interface Props {
   canEdit: boolean
   authorName: string
   scale: number
-  containerRef: React.RefObject<HTMLDivElement | null>
-  panBy: (dx: number, dy: number) => void
-  getView: () => { s: number; tx: number; ty: number }
+  isDragging: boolean
   onMove: (id: string, x: number, y: number) => void
   onResize: (id: string, width: number, height: number) => void
   onBringToFront: (id: string) => void
@@ -62,9 +59,7 @@ export default function NoteCard({
   canEdit,
   authorName,
   scale,
-  containerRef,
-  panBy,
-  getView,
+  isDragging,
   onMove,
   onResize,
   onBringToFront,
@@ -83,17 +78,14 @@ export default function NoteCard({
   const [showPalette, setShowPalette] = useState(false)
   const [tagDraft, setTagDraft] = useState('')
   const [uploading, setUploading] = useState(false)
-  const [lifted, setLifted] = useState(false)
 
   const drag = useRef({ startX: 0, startY: 0, originX: 0, originY: 0 })
   const rsz = useRef({ startX: 0, startY: 0, originW: 0, originH: 0 })
-  const posRef = useRef({ x: note.x, y: note.y })
   const suppressClick = useRef(false)
+  const lastEmit = useRef(0)
 
   const tilt = tiltFor(note.id)
 
-  // Throttled broadcast of live activity so others see a "shadow".
-  const lastEmit = useRef(0)
   function emit(
     kind: ActivityInput['kind'],
     extra: Partial<ActivityInput> = {},
@@ -118,13 +110,11 @@ export default function NoteCard({
     })
   }
 
+  // While not actively mouse-dragging/resizing here, mirror server/board state
+  // (this also reflects live touch drags driven by the board gesture manager).
   useEffect(() => {
     if (!dragging) setPos({ x: note.x, y: note.y })
   }, [note.x, note.y, dragging])
-
-  useEffect(() => {
-    posRef.current = pos
-  }, [pos])
 
   useEffect(() => {
     if (!resizing) setSize({ w: note.width, h: note.height })
@@ -134,18 +124,13 @@ export default function NoteCard({
     if (!editing) setText(note.text)
   }, [note.text, editing])
 
-  // ---- Drag ----------------------------------------------------------------
+  // ---- Drag (desktop mouse only; touch dragging is handled by the board) ----
   function handlePointerDown(e: ReactPointerEvent) {
     if (!canEdit) return
+    if (e.pointerType !== 'mouse') return // touch → board gesture manager
     if ((e.target as HTMLElement).closest('[data-no-drag]')) return
-    onBringToFront(note.id)
-    if (e.pointerType === 'touch') startTouch(e)
-    else startMouseDrag(e)
-  }
-
-  // Desktop: immediate drag, delta-based (÷scale to convert screen→canvas).
-  function startMouseDrag(e: ReactPointerEvent) {
     e.preventDefault()
+    onBringToFront(note.id)
     setDragging(true)
     drag.current = {
       startX: e.clientX,
@@ -182,128 +167,7 @@ export default function NoteCard({
     document.addEventListener('pointerup', up)
   }
 
-  // Mobile: touch a note to PAN the board; long-press to pick the note up,
-  // then drag it. Dragging near a screen edge auto-pans the board.
-  function startTouch(e: ReactPointerEvent) {
-    const startX = e.clientX
-    const startY = e.clientY
-    const state = {
-      picked: false,
-      panning: false,
-      grabX: 0,
-      grabY: 0,
-      lastX: startX,
-      lastY: startY,
-      prevX: startX,
-      prevY: startY,
-    }
-    let autopanRAF = 0
-
-    const rect = () => containerRef.current?.getBoundingClientRect()
-
-    const updateFromFinger = () => {
-      const r = rect()
-      if (!r) return
-      const v = getView()
-      const rawX = (state.lastX - r.left - v.tx) / v.s - state.grabX
-      const rawY = (state.lastY - r.top - v.ty) / v.s - state.grabY
-      const nx = Math.min(Math.max(0, CANVAS_W - size.w), Math.max(0, rawX))
-      const ny = Math.min(Math.max(0, CANVAS_H - size.h), Math.max(0, rawY))
-      posRef.current = { x: nx, y: ny }
-      setPos({ x: nx, y: ny })
-      emit('moving', { x: nx, y: ny }, 55)
-    }
-
-    const autopanTick = () => {
-      if (!state.picked) return
-      const r = rect()
-      if (r) {
-        const EDGE = 50
-        const MAX = 9
-        const dl = state.lastX - r.left
-        const dr = r.right - state.lastX
-        const dt = state.lastY - r.top
-        const db = r.bottom - state.lastY
-        let dx = 0
-        let dy = 0
-        if (dl < EDGE) dx = MAX * (1 - Math.max(0, dl) / EDGE)
-        else if (dr < EDGE) dx = -MAX * (1 - Math.max(0, dr) / EDGE)
-        if (dt < EDGE) dy = MAX * (1 - Math.max(0, dt) / EDGE)
-        else if (db < EDGE) dy = -MAX * (1 - Math.max(0, db) / EDGE)
-        if (dx || dy) {
-          panBy(dx, dy)
-          updateFromFinger()
-        }
-      }
-      autopanRAF = requestAnimationFrame(autopanTick)
-    }
-
-    const pickup = () => {
-      state.picked = true
-      setDragging(true)
-      setLifted(true)
-      document.body.classList.add('dragging')
-      navigator.vibrate?.(15)
-      const r = rect()
-      const v = getView()
-      if (r) {
-        const fcx = (state.lastX - r.left - v.tx) / v.s
-        const fcy = (state.lastY - r.top - v.ty) / v.s
-        state.grabX = fcx - posRef.current.x
-        state.grabY = fcy - posRef.current.y
-      }
-      autopanRAF = requestAnimationFrame(autopanTick)
-    }
-
-    let timer = window.setTimeout(pickup, 260)
-
-    const move = (ev: PointerEvent) => {
-      state.lastX = ev.clientX
-      state.lastY = ev.clientY
-      if (state.picked) {
-        updateFromFinger()
-        return
-      }
-      const moved = Math.hypot(ev.clientX - startX, ev.clientY - startY)
-      if (!state.panning && moved > 8) {
-        // Moved before the hold completed → treat as a board pan.
-        window.clearTimeout(timer)
-        state.panning = true
-      }
-      if (state.panning) {
-        panBy(ev.clientX - state.prevX, ev.clientY - state.prevY)
-      }
-      state.prevX = ev.clientX
-      state.prevY = ev.clientY
-    }
-
-    const up = () => {
-      window.clearTimeout(timer)
-      cancelAnimationFrame(autopanRAF)
-      document.removeEventListener('pointermove', move)
-      document.removeEventListener('pointerup', up)
-      document.removeEventListener('pointercancel', up)
-      if (state.picked) {
-        document.body.classList.remove('dragging')
-        setDragging(false)
-        setLifted(false)
-        onMove(note.id, posRef.current.x, posRef.current.y)
-        onActivityEnd?.()
-      }
-      if (state.picked || state.panning) {
-        suppressClick.current = true
-        window.setTimeout(() => (suppressClick.current = false), 300)
-      }
-      state.picked = false
-      state.panning = false
-    }
-
-    document.addEventListener('pointermove', move)
-    document.addEventListener('pointerup', up)
-    document.addEventListener('pointercancel', up)
-  }
-
-  // ---- Resize --------------------------------------------------------------
+  // ---- Resize (mouse + touch; corner handle) -------------------------------
   function handleResizeDown(e: ReactPointerEvent) {
     if (!canEdit) return
     e.preventDefault()
@@ -384,10 +248,16 @@ export default function NoteCard({
   }
 
   const active = dragging || resizing
+  const lifted = isDragging
 
   return (
     <div
-      data-note
+      data-note-id={note.id}
+      data-note-editable={canEdit}
+      data-nx={pos.x}
+      data-ny={pos.y}
+      data-nw={size.w}
+      data-nh={size.h}
       onPointerDown={handlePointerDown}
       style={{
         left: pos.x,
@@ -402,9 +272,9 @@ export default function NoteCard({
             ? 'rotate(0deg) scale(1.02)'
             : `rotate(${tilt}deg)`,
       }}
-      className={`absolute flex flex-col rounded-2xl border-2 p-3 pt-5 text-ink transition-[box-shadow,transform] duration-150 ${
+      className={`absolute flex touch-none flex-col rounded-2xl border-2 p-3 pt-5 text-ink transition-[box-shadow,transform] duration-150 ${
         lifted
-          ? 'border-coral shadow-pop-lg ring-4 ring-coral/40 animate-wiggle'
+          ? 'border-coral shadow-pop-lg ring-4 ring-coral/40'
           : 'border-ink/80 shadow-pop hover:shadow-pop-lg'
       } ${canEdit ? 'cursor-grab-cute' : ''}`}
     >
@@ -504,7 +374,6 @@ export default function NoteCard({
         />
       ) : (
         <p
-          data-no-drag={canEdit ? true : undefined}
           onClick={() => {
             if (suppressClick.current) return
             if (canEdit) setEditing(true)
@@ -513,7 +382,7 @@ export default function NoteCard({
         >
           {note.text || (
             <span className="italic text-ink/40">
-              {canEdit ? 'Click to add text…' : ''}
+              {canEdit ? 'Tap to add text…' : ''}
             </span>
           )}
         </p>

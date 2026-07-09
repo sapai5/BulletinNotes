@@ -17,6 +17,12 @@ interface View {
 const clampScale = (v: number, lo = MIN_SCALE, hi = MAX_SCALE) =>
   Math.min(hi, Math.max(lo, v))
 
+export interface NoteDragApi {
+  onNoteDragStart: (id: string) => void
+  onNoteDragMove: (id: string, x: number, y: number) => void
+  onNoteDragEnd: (id: string) => void
+}
+
 function loadSaved(boardId: string): View | null {
   try {
     const raw = localStorage.getItem(SAVE_KEY(boardId))
@@ -35,9 +41,15 @@ function loadSaved(boardId: string): View | null {
  * anchor zoom to the pointer/finger position at ANY scale — unlike native
  * scrolling, which can't position content that's smaller than the viewport.
  */
-export function useBoardView(boardId: string | undefined, enabled: boolean) {
+export function useBoardView(
+  boardId: string | undefined,
+  enabled: boolean,
+  noteApi?: NoteDragApi,
+) {
   const containerRef = useRef<HTMLDivElement>(null)
   const surfaceRef = useRef<HTMLDivElement>(null)
+  const noteApiRef = useRef(noteApi)
+  noteApiRef.current = noteApi
 
   const [view, setView] = useState<View>({ s: 1, tx: 0, ty: 0 })
   const viewRef = useRef<View>(view)
@@ -149,57 +161,203 @@ export function useBoardView(boardId: string | undefined, enabled: boolean) {
       else fitToView()
     }
 
-    // ---- Pointer pan + pinch (mouse + touch, unified) ----
-    const pointers = new Map<number, { x: number; y: number }>()
+    // ---- Unified pointer gestures: pan, pinch-zoom, and note drag ----
+    const pointers = new Map<
+      number,
+      { x: number; y: number; noteId: string | null; editable: boolean }
+    >()
+    let gesture: 'none' | 'pan' | 'note' = 'none'
     let lastDist = 0
     let lastMid: { x: number; y: number } | null = null
+    let holdTimer = 0
+    let autopanRAF = 0
+    const drag = {
+      id: '',
+      grabX: 0,
+      grabY: 0,
+      nx0: 0,
+      ny0: 0,
+      nw: 0,
+      nh: 0,
+      sx: 0,
+      sy: 0,
+      lx: 0,
+      ly: 0,
+    }
 
-    const isOnNote = (t: EventTarget | null) =>
-      t instanceof Element && !!t.closest('[data-note]')
+    const noteElOf = (t: EventTarget | null) =>
+      t instanceof Element
+        ? (t.closest('[data-note-id]') as HTMLElement | null)
+        : null
 
-    const onPointerMove = (e: PointerEvent) => {
-      if (!pointers.has(e.pointerId)) return
-      const prev = pointers.get(e.pointerId)!
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const moveNote = () => {
+      const v = viewRef.current
+      const r = el.getBoundingClientRect()
+      const nx = Math.min(
+        Math.max(0, CANVAS_W - drag.nw),
+        Math.max(0, (drag.lx - r.left - v.tx) / v.s - drag.grabX),
+      )
+      const ny = Math.min(
+        Math.max(0, CANVAS_H - drag.nh),
+        Math.max(0, (drag.ly - r.top - v.ty) / v.s - drag.grabY),
+      )
+      noteApiRef.current?.onNoteDragMove(drag.id, nx, ny)
+    }
+
+    const autopanTick = () => {
+      if (gesture !== 'note') return
+      const r = el.getBoundingClientRect()
+      const EDGE = 50
+      const MAX = 9
+      const dl = drag.lx - r.left
+      const dr = r.right - drag.lx
+      const dt = drag.ly - r.top
+      const db = r.bottom - drag.ly
+      let dx = 0
+      let dy = 0
+      if (dl < EDGE) dx = MAX * (1 - Math.max(0, dl) / EDGE)
+      else if (dr < EDGE) dx = -MAX * (1 - Math.max(0, dr) / EDGE)
+      if (dt < EDGE) dy = MAX * (1 - Math.max(0, dt) / EDGE)
+      else if (db < EDGE) dy = -MAX * (1 - Math.max(0, db) / EDGE)
+      if (dx || dy) {
+        panBy(dx, dy)
+        moveNote()
+      }
+      autopanRAF = requestAnimationFrame(autopanTick)
+    }
+
+    const pickup = () => {
+      gesture = 'note'
+      const v = viewRef.current
+      const r = el.getBoundingClientRect()
+      const fcx = (drag.lx - r.left - v.tx) / v.s
+      const fcy = (drag.ly - r.top - v.ty) / v.s
+      drag.grabX = fcx - drag.nx0
+      drag.grabY = fcy - drag.ny0
+      navigator.vibrate?.(15)
+      noteApiRef.current?.onNoteDragStart(drag.id)
+      autopanRAF = requestAnimationFrame(autopanTick)
+    }
+
+    const endNoteDrag = () => {
+      cancelAnimationFrame(autopanRAF)
+      if (drag.id) noteApiRef.current?.onNoteDragEnd(drag.id)
+    }
+
+    const onMove = (e: PointerEvent) => {
+      const p = pointers.get(e.pointerId)
+      if (!p) return
+      const prevX = p.x
+      const prevY = p.y
+      p.x = e.clientX
+      p.y = e.clientY
       const pts = [...pointers.values()]
-      if (pts.length === 1) {
-        panBy(e.clientX - prev.x, e.clientY - prev.y)
-      } else if (pts.length === 2) {
-        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
-        const mid = {
-          x: (pts[0].x + pts[1].x) / 2,
-          y: (pts[0].y + pts[1].y) / 2,
-        }
+
+      if (pts.length >= 2) {
+        if (gesture === 'note') endNoteDrag()
+        clearTimeout(holdTimer)
+        gesture = 'pan'
+        const a = pts[0]
+        const b = pts[1]
+        const dist = Math.hypot(a.x - b.x, a.y - b.y)
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
         if (lastDist > 0) {
           zoomAt(mid.x, mid.y, dist / lastDist)
           if (lastMid) panBy(mid.x - lastMid.x, mid.y - lastMid.y)
         }
         lastDist = dist
         lastMid = mid
+        return
       }
+
+      // single pointer
+      if (gesture === 'note') {
+        drag.lx = e.clientX
+        drag.ly = e.clientY
+        moveNote()
+        return
+      }
+      if (gesture === 'none') {
+        drag.lx = e.clientX
+        drag.ly = e.clientY
+        const moved = Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy)
+        if (moved > 8) {
+          clearTimeout(holdTimer)
+          gesture = 'pan'
+        } else {
+          return
+        }
+      }
+      if (gesture === 'pan') panBy(e.clientX - prevX, e.clientY - prevY)
     }
-    const endPointer = (e: PointerEvent) => {
+
+    const onEnd = (e: PointerEvent) => {
       if (!pointers.has(e.pointerId)) return
       pointers.delete(e.pointerId)
+      clearTimeout(holdTimer)
+      if (gesture === 'note') endNoteDrag()
       if (pointers.size < 2) {
         lastDist = 0
         lastMid = null
       }
       if (pointers.size === 0) {
-        window.removeEventListener('pointermove', onPointerMove)
-        window.removeEventListener('pointerup', endPointer)
-        window.removeEventListener('pointercancel', endPointer)
+        gesture = 'none'
+        drag.id = ''
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onEnd)
+        window.removeEventListener('pointercancel', onEnd)
+      } else {
+        gesture = 'pan' // a finger is still down → keep panning
       }
     }
-    const onPointerDown = (e: PointerEvent) => {
-      if (isOnNote(e.target)) return // let the note handle its own drag
+
+    const onDown = (e: PointerEvent) => {
+      const target = e.target
+      // Controls / resize handle are handled locally by the note.
+      if (target instanceof Element && target.closest('[data-no-drag]')) return
+      const noteEl = noteElOf(target)
+      const editable = noteEl?.getAttribute('data-note-editable') === 'true'
+      // Desktop editable-note dragging stays inside NoteCard (mouse).
+      if (e.pointerType === 'mouse' && noteEl && editable) return
       if (e.pointerType === 'mouse' && e.button !== 0) return
+
       if (pointers.size === 0) {
-        window.addEventListener('pointermove', onPointerMove)
-        window.addEventListener('pointerup', endPointer)
-        window.addEventListener('pointercancel', endPointer)
+        window.addEventListener('pointermove', onMove)
+        window.addEventListener('pointerup', onEnd)
+        window.addEventListener('pointercancel', onEnd)
       }
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      pointers.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+        noteId: noteEl?.getAttribute('data-note-id') ?? null,
+        editable,
+      })
+
+      if (pointers.size === 2) {
+        clearTimeout(holdTimer)
+        if (gesture === 'note') endNoteDrag()
+        gesture = 'pan'
+        lastDist = 0
+        lastMid = null
+        return
+      }
+
+      // single pointer
+      if (e.pointerType === 'touch' && noteEl && editable) {
+        drag.id = noteEl.getAttribute('data-note-id') as string
+        drag.nx0 = parseFloat(noteEl.getAttribute('data-nx') || '0')
+        drag.ny0 = parseFloat(noteEl.getAttribute('data-ny') || '0')
+        drag.nw = parseFloat(noteEl.getAttribute('data-nw') || '0')
+        drag.nh = parseFloat(noteEl.getAttribute('data-nh') || '0')
+        drag.sx = e.clientX
+        drag.sy = e.clientY
+        drag.lx = e.clientX
+        drag.ly = e.clientY
+        gesture = 'none' // undecided: hold → drag note, move → pan
+        holdTimer = window.setTimeout(pickup, 260)
+      } else {
+        gesture = 'pan'
+      }
     }
 
     const onWheel = (e: WheelEvent) => {
@@ -211,15 +369,17 @@ export function useBoardView(boardId: string | undefined, enabled: boolean) {
       }
     }
 
-    el.addEventListener('pointerdown', onPointerDown)
+    el.addEventListener('pointerdown', onDown)
     el.addEventListener('wheel', onWheel, { passive: false })
 
     return () => {
-      el.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('pointermove', onPointerMove)
-      window.removeEventListener('pointerup', endPointer)
-      window.removeEventListener('pointercancel', endPointer)
+      el.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onEnd)
+      window.removeEventListener('pointercancel', onEnd)
       el.removeEventListener('wheel', onWheel)
+      clearTimeout(holdTimer)
+      cancelAnimationFrame(autopanRAF)
     }
   }, [enabled, boardId, apply, fitToView, zoomAt, panBy])
 

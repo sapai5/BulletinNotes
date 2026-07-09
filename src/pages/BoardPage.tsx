@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -39,8 +39,46 @@ export default function BoardPage() {
   const { viewers, ghosts, emitActivity, emitActivityEnd } =
     useBoardCollab(boardId)
 
-  const { containerRef, surfaceRef, scale, tx, ty, zoomIn, zoomOut, fitToView, panBy, getView } =
-    useBoardView(boardId, !loading && !!board)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const notesRef = useRef<Note[]>([])
+  const lastEmitRef = useRef(0)
+
+  // Live note-drag driven by the board's unified gesture manager (touch).
+  function handleNoteDragStart(id: string) {
+    handleBringToFront(id)
+    setDraggingId(id)
+  }
+  function handleNoteDragMove(id: string, x: number, y: number) {
+    patchLocal(id, { x, y })
+    const n = notesRef.current.find((nn) => nn.id === id)
+    const now = Date.now()
+    if (n && now - lastEmitRef.current >= 55) {
+      lastEmitRef.current = now
+      emitActivity({
+        noteId: n.id,
+        x,
+        y,
+        width: n.width,
+        height: n.height,
+        color: n.color,
+        text: n.text,
+        kind: 'moving',
+      })
+    }
+  }
+  function handleNoteDragEnd(id: string) {
+    setDraggingId(null)
+    const n = notesRef.current.find((nn) => nn.id === id)
+    if (n) persist(id, { x: n.x, y: n.y })
+    emitActivityEnd()
+  }
+
+  const { containerRef, surfaceRef, scale, tx, ty, zoomIn, zoomOut, fitToView } =
+    useBoardView(boardId, !loading && !!board, {
+      onNoteDragStart: handleNoteDragStart,
+      onNoteDragMove: handleNoteDragMove,
+      onNoteDragEnd: handleNoteDragEnd,
+    })
 
   // ---- Loading -------------------------------------------------------------
   const loadAuthors = useCallback(async () => {
@@ -107,6 +145,10 @@ export default function BoardPage() {
     setLoading(true)
     load()
   }, [load])
+
+  useEffect(() => {
+    notesRef.current = notes
+  }, [notes])
 
   // ---- Realtime ------------------------------------------------------------
   useEffect(() => {
@@ -395,9 +437,7 @@ export default function BoardPage() {
               canEdit={note.author_id === user?.id}
               authorName={authorNames[note.author_id] ?? 'Someone'}
               scale={scale}
-              containerRef={containerRef}
-              panBy={panBy}
-              getView={getView}
+              isDragging={draggingId === note.id}
               onMove={handleMove}
               onResize={handleResize}
               onBringToFront={handleBringToFront}
