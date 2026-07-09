@@ -36,6 +36,7 @@ interface Props {
   note: Note
   canEdit: boolean
   authorName: string
+  scale: number
   onMove: (id: string, x: number, y: number) => void
   onResize: (id: string, width: number, height: number) => void
   onBringToFront: (id: string) => void
@@ -56,6 +57,7 @@ export default function NoteCard({
   note,
   canEdit,
   authorName,
+  scale,
   onMove,
   onResize,
   onBringToFront,
@@ -134,8 +136,8 @@ export default function NoteCard({
     document.body.classList.add('dragging')
 
     const move = (ev: PointerEvent) => {
-      const nx = Math.max(0, drag.current.originX + (ev.clientX - drag.current.startX))
-      const ny = Math.max(0, drag.current.originY + (ev.clientY - drag.current.startY))
+      const nx = Math.max(0, drag.current.originX + (ev.clientX - drag.current.startX) / scale)
+      const ny = Math.max(0, drag.current.originY + (ev.clientY - drag.current.startY) / scale)
       setPos({ x: nx, y: ny })
       emit('moving', { x: nx, y: ny }, 55)
     }
@@ -170,8 +172,8 @@ export default function NoteCard({
     document.body.classList.add('resizing')
 
     const move = (ev: PointerEvent) => {
-      const w = Math.max(MIN_W, rsz.current.originW + (ev.clientX - rsz.current.startX))
-      const h = Math.max(MIN_H, rsz.current.originH + (ev.clientY - rsz.current.startY))
+      const w = Math.max(MIN_W, rsz.current.originW + (ev.clientX - rsz.current.startX) / scale)
+      const h = Math.max(MIN_H, rsz.current.originH + (ev.clientY - rsz.current.startY) / scale)
       setSize({ w, h })
       emit('resizing', { width: w, height: h }, 55)
     }

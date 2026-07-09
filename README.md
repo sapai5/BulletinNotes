@@ -11,6 +11,7 @@ backed by **Supabase** (Postgres, Auth, Storage, Realtime).
 - 🗂️ Create **unlimited boards**, each with its own notes
 - ✉️ **Invite members by email**; share a board with anyone who has signed up
 - 📝 **Freeform draggable + resizable notes** you can place anywhere on a large canvas
+- 🔍 **Pinch-to-zoom & pan** (trackpad + mobile); fits the whole board on first open and restores your last view per board
 - 🎨 Per-note **color picker**, **#tags**, and **image uploads**
 - 👤 **Profile page** — set a username (shown to everyone) and upload a profile picture
 - 🧑‍🤝‍🧑 **Friends tab** — add friends by email, accept/decline requests, and see who's **online right now**

@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Plus, Users, StickyNote } from 'lucide-react'
+import {
+  ArrowLeft,
+  Plus,
+  Users,
+  StickyNote,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+} from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import type { Board, Note } from '../types'
@@ -12,6 +20,7 @@ import MembersDialog from '../components/MembersDialog'
 import AppHeader from '../components/AppHeader'
 import Spinner from '../components/Spinner'
 import { useBoardCollab } from '../hooks/useBoardCollab'
+import { useBoardView, CANVAS_W, CANVAS_H } from '../hooks/useBoardView'
 
 export default function BoardPage() {
   const { boardId } = useParams<{ boardId: string }>()
@@ -25,12 +34,13 @@ export default function BoardPage() {
   const [error, setError] = useState<string | null>(null)
   const [showMembers, setShowMembers] = useState(false)
 
-  const scrollRef = useRef<HTMLDivElement>(null)
-
   const isOwner = board?.owner_id === user?.id
 
   const { viewers, ghosts, emitActivity, emitActivityEnd } =
     useBoardCollab(boardId)
+
+  const { scrollRef, sizerRef, surfaceRef, scale, zoomIn, zoomOut, fitToView } =
+    useBoardView(boardId, !loading && !!board)
 
   // ---- Loading -------------------------------------------------------------
   const loadAuthors = useCallback(async () => {
@@ -154,9 +164,15 @@ export default function BoardPage() {
 
   async function addNote() {
     if (!boardId || !user) return
+    // Place the note near the center of what's currently visible, converting
+    // viewport pixels to canvas coordinates (accounting for zoom).
     const el = scrollRef.current
-    const baseX = (el?.scrollLeft ?? 0) + 60 + Math.random() * 40
-    const baseY = (el?.scrollTop ?? 0) + 60 + Math.random() * 40
+    const s = scale || 1
+    const cx = ((el?.scrollLeft ?? 0) + (el?.clientWidth ?? 600) / 2) / s
+    const cy = ((el?.scrollTop ?? 0) + (el?.clientHeight ?? 400) / 2) / s
+    const jitter = () => Math.random() * 40 - 20
+    const baseX = Math.max(0, Math.min(CANVAS_W - 220, cx - 110 + jitter()))
+    const baseY = Math.max(0, Math.min(CANVAS_H - 220, cy - 110 + jitter()))
     const color = NOTE_COLORS[Math.floor(Math.random() * NOTE_COLORS.length)]
 
     const { data, error } = await supabase
@@ -276,6 +292,39 @@ export default function BoardPage() {
           <Users className="h-4 w-4" strokeWidth={2.5} />
           Members
         </button>
+
+        {/* Zoom controls */}
+        <div className="flex items-center gap-1 rounded-full border-2 border-ink bg-white px-1 py-1 shadow-pop-sm">
+          <button
+            onClick={zoomOut}
+            className="flex h-6 w-6 items-center justify-center rounded-full hover:bg-ink/10"
+            title="Zoom out"
+          >
+            <ZoomOut className="h-4 w-4" strokeWidth={2.5} />
+          </button>
+          <button
+            onClick={fitToView}
+            className="flex items-center gap-1 rounded-full px-1.5 font-display text-xs font-bold hover:bg-ink/10"
+            title="Fit whole board"
+          >
+            {Math.round(scale * 100)}%
+          </button>
+          <button
+            onClick={zoomIn}
+            className="flex h-6 w-6 items-center justify-center rounded-full hover:bg-ink/10"
+            title="Zoom in"
+          >
+            <ZoomIn className="h-4 w-4" strokeWidth={2.5} />
+          </button>
+          <button
+            onClick={fitToView}
+            className="flex h-6 w-6 items-center justify-center rounded-full hover:bg-ink/10"
+            title="Fit whole board"
+          >
+            <Maximize2 className="h-4 w-4" strokeWidth={2.5} />
+          </button>
+        </div>
+
         <span className="ml-auto font-display text-xs font-bold text-ink/50">
           {notes.length} note{notes.length === 1 ? '' : 's'}
         </span>
@@ -307,41 +356,67 @@ export default function BoardPage() {
       )}
 
       {/* Canvas */}
-      <div ref={scrollRef} className="corkboard relative flex-1 overflow-auto">
-        <div className="relative" style={{ width: 3000, height: 2000 }}>
-          {notes.length === 0 && (
-            <div className="pointer-events-none absolute left-1/2 top-40 -translate-x-1/2 text-center">
-              <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-3xl border-2 border-ink bg-white shadow-pop animate-float">
-                <StickyNote className="h-8 w-8 text-coral" strokeWidth={2.5} />
+      <div
+        ref={scrollRef}
+        className="corkboard relative flex-1 overflow-auto"
+        style={{ touchAction: 'pan-x pan-y' }}
+      >
+        {/* Sizer carries the scaled dimensions so scrollbars are correct. */}
+        <div
+          ref={sizerRef}
+          style={{
+            width: CANVAS_W * scale,
+            height: CANVAS_H * scale,
+            overflow: 'hidden',
+            position: 'relative',
+          }}
+        >
+          {/* Surface is the fixed logical canvas, visually scaled. */}
+          <div
+            ref={surfaceRef}
+            style={{
+              width: CANVAS_W,
+              height: CANVAS_H,
+              transformOrigin: '0 0',
+              transform: `scale(${scale})`,
+              position: 'relative',
+            }}
+          >
+            {notes.length === 0 && (
+              <div className="pointer-events-none absolute left-1/2 top-40 -translate-x-1/2 text-center">
+                <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-3xl border-2 border-ink bg-white shadow-pop animate-float">
+                  <StickyNote className="h-8 w-8 text-coral" strokeWidth={2.5} />
+                </div>
+                <p className="font-display text-xl font-bold text-white drop-shadow">
+                  This board is empty!
+                </p>
+                <p className="font-body font-semibold text-white/90 drop-shadow">
+                  Hit “Add note” to pin your first one.
+                </p>
               </div>
-              <p className="font-display text-xl font-bold text-white drop-shadow">
-                This board is empty!
-              </p>
-              <p className="font-body font-semibold text-white/90 drop-shadow">
-                Hit “Add note” to pin your first one.
-              </p>
-            </div>
-          )}
-          {notes.map((note) => (
-            <NoteCard
-              key={note.id}
-              note={note}
-              canEdit={note.author_id === user?.id}
-              authorName={authorNames[note.author_id] ?? 'Someone'}
-              onMove={handleMove}
-              onResize={handleResize}
-              onBringToFront={handleBringToFront}
-              onPatch={handlePatch}
-              onDelete={handleDelete}
-              onActivity={emitActivity}
-              onActivityEnd={emitActivityEnd}
-            />
-          ))}
+            )}
+            {notes.map((note) => (
+              <NoteCard
+                key={note.id}
+                note={note}
+                canEdit={note.author_id === user?.id}
+                authorName={authorNames[note.author_id] ?? 'Someone'}
+                scale={scale}
+                onMove={handleMove}
+                onResize={handleResize}
+                onBringToFront={handleBringToFront}
+                onPatch={handlePatch}
+                onDelete={handleDelete}
+                onActivity={emitActivity}
+                onActivityEnd={emitActivityEnd}
+              />
+            ))}
 
-          {/* Live "shadows" of what other viewers are doing right now. */}
-          {Object.values(ghosts).map((g) => (
-            <GhostNote key={g.userId} ghost={g} />
-          ))}
+            {/* Live "shadows" of what other viewers are doing right now. */}
+            {Object.values(ghosts).map((g) => (
+              <GhostNote key={g.userId} ghost={g} />
+            ))}
+          </div>
         </div>
       </div>
 
