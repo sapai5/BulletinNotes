@@ -247,9 +247,10 @@ export default function NoteCard({
         backgroundColor: note.color,
         zIndex: note.z_index,
         transform: active ? 'rotate(0deg) scale(1.02)' : `rotate(${tilt}deg)`,
-        cursor: canEdit ? 'grab' : 'default',
       }}
-      className="absolute flex flex-col rounded-2xl border-2 border-ink/80 p-3 pt-5 text-ink shadow-pop transition-[box-shadow,transform] duration-150 hover:shadow-pop-lg"
+      className={`absolute flex flex-col rounded-2xl border-2 border-ink/80 p-3 pt-5 text-ink shadow-pop transition-[box-shadow,transform] duration-150 hover:shadow-pop-lg ${
+        canEdit ? 'cursor-grab-cute' : ''
+      }`}
     >
       {/* Tape strip */}
       <div className="pointer-events-none absolute -top-2.5 left-1/2 h-5 w-16 -translate-x-1/2 -rotate-2 rounded-sm bg-white/50 ring-1 ring-ink/10 backdrop-blur-[1px]" />

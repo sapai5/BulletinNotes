@@ -8,6 +8,11 @@ body,
   height: 100%;
 }
 
+:root {
+  --cur-arrow: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='32'%20height='32'%20viewBox='0%200%2032%2032'%3E%3Cpath%20d='M5%202L5%2024L11%2018L15%2027L18%2025L14%2017L22%2016Z'%20fill='%23fff7ed'%20stroke='%234a3f55'%20stroke-width='2.2'%20stroke-linejoin='round'/%3E%3C/svg%3E") 5 2;
+  --cur-pin: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='32'%20height='32'%20viewBox='0%200%2032%2032'%3E%3Cline%20x1='11'%20y1='12'%20x2='6'%20y2='29'%20stroke='%234a3f55'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3Ccircle%20cx='15'%20cy='10'%20r='8'%20fill='%23ff8fab'%20stroke='%234a3f55'%20stroke-width='2.5'/%3E%3Ccircle%20cx='12'%20cy='7'%20r='2.4'%20fill='%23ffffff'/%3E%3C/svg%3E") 6 29;
+}
+
 body {
   margin: 0;
   font-family: 'Nunito', ui-rounded, system-ui, sans-serif;
@@ -15,8 +20,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* Cute chunky cartoon arrow cursor (hotspot at the tip). */
-  cursor: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='32'%20height='32'%20viewBox='0%200%2032%2032'%3E%3Cpath%20d='M5%202L5%2024L11%2018L15%2027L18%2025L14%2017L22%2016Z'%20fill='%23fff7ed'%20stroke='%234a3f55'%20stroke-width='2.2'%20stroke-linejoin='round'/%3E%3C/svg%3E") 5 2,
-    auto;
+  cursor: var(--cur-arrow), auto;
 }
 
 /* Pushpin cursor when hovering clickable things — you're pinning stuff! */
@@ -26,8 +30,12 @@ label,
 summary,
 [role='button'],
 .cursor-pin {
-  cursor: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='32'%20height='32'%20viewBox='0%200%2032%2032'%3E%3Cline%20x1='11'%20y1='12'%20x2='6'%20y2='29'%20stroke='%234a3f55'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3Ccircle%20cx='15'%20cy='10'%20r='8'%20fill='%23ff8fab'%20stroke='%234a3f55'%20stroke-width='2.5'/%3E%3Ccircle%20cx='12'%20cy='7'%20r='2.4'%20fill='%23ffffff'/%3E%3C/svg%3E") 6 29,
-    pointer;
+  cursor: var(--cur-pin), pointer;
+}
+
+/* Draggable notes get the pin too (you're pinning/moving them). */
+.cursor-grab-cute {
+  cursor: var(--cur-pin), grab;
 }
 
 /* Keep a normal text caret in text fields. */
@@ -43,7 +51,7 @@ textarea,
   user-select: none;
 }
 .dragging {
-  cursor: grabbing !important;
+  cursor: var(--cur-pin), grabbing !important;
 }
 .resizing,
 .resizing * {
@@ -85,6 +93,6 @@ textarea,
     @apply inline-flex items-center justify-center gap-2 rounded-full border-2 border-ink
       font-display font-semibold text-ink shadow-pop transition
       active:translate-x-[3px] active:translate-y-[3px] active:shadow-none
-      disabled:pointer-events-none disabled:opacity-60;
+      disabled:opacity-60;
   }
 }
