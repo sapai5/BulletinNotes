@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ─── Node / Vite / PWA (added for this project) ───────────────────────────
+node_modules
+dist
+dist-ssr
+dev-dist
+*.local
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
