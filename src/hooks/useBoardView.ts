@@ -4,25 +4,25 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 export const CANVAS_W = 3000
 export const CANVAS_H = 2000
 
-const MIN_SCALE = 0.2
-const MAX_SCALE = 3
+const MIN_SCALE = 0.1
+const MAX_SCALE = 4
 const SAVE_KEY = (boardId: string) => `bb-view-${boardId}`
 
-interface SavedView {
-  scale: number
-  left: number
-  top: number
+interface View {
+  s: number // scale
+  tx: number // translate x (px)
+  ty: number // translate y (px)
 }
 
-const clamp = (v: number, lo = MIN_SCALE, hi = MAX_SCALE) =>
+const clampScale = (v: number, lo = MIN_SCALE, hi = MAX_SCALE) =>
   Math.min(hi, Math.max(lo, v))
 
-function loadSaved(boardId: string): SavedView | null {
+function loadSaved(boardId: string): View | null {
   try {
     const raw = localStorage.getItem(SAVE_KEY(boardId))
     if (!raw) return null
     const v = JSON.parse(raw)
-    if (typeof v?.scale === 'number') return v as SavedView
+    if (typeof v?.s === 'number') return v as View
     return null
   } catch {
     return null
@@ -30,176 +30,215 @@ function loadSaved(boardId: string): SavedView | null {
 }
 
 /**
- * Pan + zoom for the board canvas.
- * - Panning uses the container's native scroll.
- * - Zoom is a CSS transform on the surface; the sizer carries the scaled size
- *   so scrollbars/extent stay correct. Focal-point math keeps the point under
- *   the cursor/fingers fixed while zooming.
- * - First visit fits the whole board; return visits restore the saved view.
+ * Transform-based pan + zoom for the board.
+ * The surface is translated + scaled via CSS transform (origin 0,0), so we can
+ * anchor zoom to the pointer/finger position at ANY scale — unlike native
+ * scrolling, which can't position content that's smaller than the viewport.
  */
 export function useBoardView(boardId: string | undefined, enabled: boolean) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const sizerRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const surfaceRef = useRef<HTMLDivElement>(null)
 
-  const [scale, setScale] = useState(1)
-  const scaleRef = useRef(1)
+  const [view, setView] = useState<View>({ s: 1, tx: 0, ty: 0 })
+  const viewRef = useRef<View>(view)
   const initedFor = useRef<string | null>(null)
   const saveTimer = useRef<number | null>(null)
-
-  // Apply a scale + optional scroll imperatively (no async gap → no flicker).
-  const applyScale = useCallback((s1: number, left?: number, top?: number) => {
-    const el = scrollRef.current
-    scaleRef.current = s1
-    if (sizerRef.current) {
-      sizerRef.current.style.width = `${CANVAS_W * s1}px`
-      sizerRef.current.style.height = `${CANVAS_H * s1}px`
-    }
-    if (surfaceRef.current) {
-      surfaceRef.current.style.transform = `scale(${s1})`
-    }
-    if (el && left !== undefined && top !== undefined) {
-      el.scrollLeft = left
-      el.scrollTop = top
-    }
-    setScale(s1)
-  }, [])
 
   const scheduleSave = useCallback(() => {
     if (!boardId) return
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(() => {
-      const el = scrollRef.current
-      if (!el) return
       try {
-        localStorage.setItem(
-          SAVE_KEY(boardId),
-          JSON.stringify({
-            scale: scaleRef.current,
-            left: el.scrollLeft,
-            top: el.scrollTop,
-          }),
-        )
+        localStorage.setItem(SAVE_KEY(boardId), JSON.stringify(viewRef.current))
       } catch {
         /* ignore quota errors */
       }
-    }, 400)
+    }, 350)
   }, [boardId])
+
+  // Keep the board from being panned completely off-screen. When the board is
+  // smaller than the viewport on an axis, it's centered on that axis.
+  const clampView = useCallback((v: View): View => {
+    const el = containerRef.current
+    if (!el) return v
+    const vw = el.clientWidth
+    const vh = el.clientHeight
+    const bw = CANVAS_W * v.s
+    const bh = CANVAS_H * v.s
+    const m = 300 // let you pan a bit past the edges to reach edge notes
+    let { tx, ty } = v
+    if (bw <= vw) tx = (vw - bw) / 2
+    else tx = Math.min(m, Math.max(vw - bw - m, tx))
+    if (bh <= vh) ty = (vh - bh) / 2
+    else ty = Math.min(m, Math.max(vh - bh - m, ty))
+    return { s: v.s, tx, ty }
+  }, [])
+
+  const apply = useCallback(
+    (v: View, save = true) => {
+      const clamped = clampView(v)
+      viewRef.current = clamped
+      if (surfaceRef.current) {
+        surfaceRef.current.style.transform = `translate(${clamped.tx}px, ${clamped.ty}px) scale(${clamped.s})`
+      }
+      setView(clamped)
+      if (save) scheduleSave()
+    },
+    [clampView, scheduleSave],
+  )
 
   // Zoom keeping (clientX, clientY) fixed on screen.
   const zoomAt = useCallback(
     (clientX: number, clientY: number, factor: number) => {
-      const el = scrollRef.current
+      const el = containerRef.current
       if (!el) return
       const rect = el.getBoundingClientRect()
       const fx = clientX - rect.left
       const fy = clientY - rect.top
-      const s0 = scaleRef.current
-      const s1 = clamp(s0 * factor)
+      const { s: s0, tx, ty } = viewRef.current
+      const s1 = clampScale(s0 * factor)
       if (s1 === s0) return
-      const canvasX = (el.scrollLeft + fx) / s0
-      const canvasY = (el.scrollTop + fy) / s0
-      applyScale(s1, canvasX * s1 - fx, canvasY * s1 - fy)
-      scheduleSave()
+      // Canvas point under the focal stays put: t1 = f - (f - t0)/s0 * s1
+      const tx1 = fx - ((fx - tx) / s0) * s1
+      const ty1 = fy - ((fy - ty) / s0) * s1
+      apply({ s: s1, tx: tx1, ty: ty1 })
     },
-    [applyScale, scheduleSave],
+    [apply],
+  )
+
+  const panBy = useCallback(
+    (dx: number, dy: number) => {
+      const v = viewRef.current
+      apply({ s: v.s, tx: v.tx + dx, ty: v.ty + dy })
+    },
+    [apply],
   )
 
   const fitToView = useCallback(() => {
-    const el = scrollRef.current
+    const el = containerRef.current
     if (!el) return
-    const s = clamp(
+    const s = Math.max(
+      0.05,
       Math.min(el.clientWidth / CANVAS_W, el.clientHeight / CANVAS_H),
     )
-    applyScale(s, 0, 0)
-    scheduleSave()
-  }, [applyScale, scheduleSave])
+    apply({ s, tx: 0, ty: 0 }) // clampView centers it
+  }, [apply])
 
   const zoomIn = useCallback(() => {
-    const el = scrollRef.current
+    const el = containerRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.2)
+    zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.25)
   }, [zoomAt])
 
   const zoomOut = useCallback(() => {
-    const el = scrollRef.current
+    const el = containerRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.2)
+    zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.25)
   }, [zoomAt])
 
-  // Initialise + attach gesture listeners once the canvas is mounted.
   useEffect(() => {
-    const el = scrollRef.current
+    const el = containerRef.current
     if (!enabled || !el || !boardId) return
 
     if (initedFor.current !== boardId) {
       initedFor.current = boardId
       const saved = loadSaved(boardId)
-      if (saved) {
-        applyScale(clamp(saved.scale), saved.left, saved.top)
-      } else {
-        fitToView()
-      }
+      if (saved) apply({ ...saved, s: clampScale(saved.s) }, false)
+      else fitToView()
     }
 
-    // Trackpad pinch / ctrl+wheel zoom.
-    const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return // let normal wheel scroll (pan)
-      e.preventDefault()
-      const factor = Math.exp(-e.deltaY * 0.01)
-      zoomAt(e.clientX, e.clientY, factor)
-    }
-
-    // Touch pinch.
+    // ---- Pointer pan + pinch (mouse + touch, unified) ----
+    const pointers = new Map<number, { x: number; y: number }>()
     let lastDist = 0
-    const dist = (t: TouchList) =>
-      Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
-    const mid = (t: TouchList) => ({
-      x: (t[0].clientX + t[1].clientX) / 2,
-      y: (t[0].clientY + t[1].clientY) / 2,
-    })
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 2) lastDist = dist(e.touches)
-    }
-    const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length !== 2) return
-      e.preventDefault()
-      const d = dist(e.touches)
-      if (lastDist > 0) {
-        const m = mid(e.touches)
-        zoomAt(m.x, m.y, d / lastDist)
+    let lastMid: { x: number; y: number } | null = null
+
+    const isOnNote = (t: EventTarget | null) =>
+      t instanceof Element && !!t.closest('[data-note]')
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (isOnNote(e.target)) return // let the note handle its own drag
+      if (e.pointerType === 'mouse' && e.button !== 0) return
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      try {
+        el.setPointerCapture(e.pointerId)
+      } catch {
+        /* ignore */
       }
-      lastDist = d
     }
-    const onTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2) lastDist = 0
+    const onPointerMove = (e: PointerEvent) => {
+      if (!pointers.has(e.pointerId)) return
+      const prev = pointers.get(e.pointerId)!
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      const pts = [...pointers.values()]
+      if (pts.length === 1) {
+        panBy(e.clientX - prev.x, e.clientY - prev.y)
+      } else if (pts.length === 2) {
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
+        const mid = {
+          x: (pts[0].x + pts[1].x) / 2,
+          y: (pts[0].y + pts[1].y) / 2,
+        }
+        if (lastDist > 0) {
+          zoomAt(mid.x, mid.y, dist / lastDist)
+          if (lastMid) panBy(mid.x - lastMid.x, mid.y - lastMid.y)
+        }
+        lastDist = dist
+        lastMid = mid
+      }
+    }
+    const endPointer = (e: PointerEvent) => {
+      pointers.delete(e.pointerId)
+      if (pointers.size < 2) {
+        lastDist = 0
+        lastMid = null
+      }
+      try {
+        el.releasePointerCapture(e.pointerId)
+      } catch {
+        /* ignore */
+      }
     }
 
-    const onScroll = () => scheduleSave()
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.ctrlKey) {
+        zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01))
+      } else {
+        panBy(-e.deltaX, -e.deltaY)
+      }
+    }
 
+    el.addEventListener('pointerdown', onPointerDown)
+    el.addEventListener('pointermove', onPointerMove)
+    el.addEventListener('pointerup', endPointer)
+    el.addEventListener('pointercancel', endPointer)
     el.addEventListener('wheel', onWheel, { passive: false })
-    el.addEventListener('touchstart', onTouchStart, { passive: false })
-    el.addEventListener('touchmove', onTouchMove, { passive: false })
-    el.addEventListener('touchend', onTouchEnd)
-    el.addEventListener('scroll', onScroll, { passive: true })
 
     return () => {
+      el.removeEventListener('pointerdown', onPointerDown)
+      el.removeEventListener('pointermove', onPointerMove)
+      el.removeEventListener('pointerup', endPointer)
+      el.removeEventListener('pointercancel', endPointer)
       el.removeEventListener('wheel', onWheel)
-      el.removeEventListener('touchstart', onTouchStart)
-      el.removeEventListener('touchmove', onTouchMove)
-      el.removeEventListener('touchend', onTouchEnd)
-      el.removeEventListener('scroll', onScroll)
     }
-  }, [enabled, boardId, applyScale, fitToView, zoomAt, scheduleSave])
+  }, [enabled, boardId, apply, fitToView, zoomAt, panBy])
 
-  // Reset the init guard when switching boards.
   useEffect(() => {
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current)
     }
   }, [boardId])
 
-  return { scrollRef, sizerRef, surfaceRef, scale, zoomIn, zoomOut, fitToView }
+  return {
+    containerRef,
+    surfaceRef,
+    scale: view.s,
+    tx: view.tx,
+    ty: view.ty,
+    zoomIn,
+    zoomOut,
+    fitToView,
+  }
 }

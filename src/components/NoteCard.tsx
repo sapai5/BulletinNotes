@@ -240,6 +240,7 @@ export default function NoteCard({
 
   return (
     <div
+      data-note
       onPointerDown={handlePointerDown}
       style={{
         left: pos.x,

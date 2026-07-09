@@ -39,7 +39,7 @@ export default function BoardPage() {
   const { viewers, ghosts, emitActivity, emitActivityEnd } =
     useBoardCollab(boardId)
 
-  const { scrollRef, sizerRef, surfaceRef, scale, zoomIn, zoomOut, fitToView } =
+  const { containerRef, surfaceRef, scale, tx, ty, zoomIn, zoomOut, fitToView } =
     useBoardView(boardId, !loading && !!board)
 
   // ---- Loading -------------------------------------------------------------
@@ -165,11 +165,13 @@ export default function BoardPage() {
   async function addNote() {
     if (!boardId || !user) return
     // Place the note near the center of what's currently visible, converting
-    // viewport pixels to canvas coordinates (accounting for zoom).
-    const el = scrollRef.current
+    // viewport pixels to canvas coordinates via the current transform.
+    const el = containerRef.current
+    const vw = el?.clientWidth ?? 600
+    const vh = el?.clientHeight ?? 400
     const s = scale || 1
-    const cx = ((el?.scrollLeft ?? 0) + (el?.clientWidth ?? 600) / 2) / s
-    const cy = ((el?.scrollTop ?? 0) + (el?.clientHeight ?? 400) / 2) / s
+    const cx = (vw / 2 - tx) / s
+    const cy = (vh / 2 - ty) / s
     const jitter = () => Math.random() * 40 - 20
     const baseX = Math.max(0, Math.min(CANVAS_W - 220, cx - 110 + jitter()))
     const baseY = Math.max(0, Math.min(CANVAS_H - 220, cy - 110 + jitter()))
@@ -357,66 +359,56 @@ export default function BoardPage() {
 
       {/* Canvas */}
       <div
-        ref={scrollRef}
-        className="corkboard relative flex-1 overflow-auto overscroll-none"
-        style={{ touchAction: 'pan-x pan-y' }}
+        ref={containerRef}
+        className="corkboard relative flex-1 touch-none overflow-hidden overscroll-none"
       >
-        {/* Sizer carries the scaled dimensions so scrollbars are correct. */}
+        {/* Surface is the fixed logical canvas, translated + scaled. */}
         <div
-          ref={sizerRef}
+          ref={surfaceRef}
           style={{
-            width: CANVAS_W * scale,
-            height: CANVAS_H * scale,
-            overflow: 'hidden',
-            position: 'relative',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: CANVAS_W,
+            height: CANVAS_H,
+            transformOrigin: '0 0',
+            transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
           }}
         >
-          {/* Surface is the fixed logical canvas, visually scaled. */}
-          <div
-            ref={surfaceRef}
-            style={{
-              width: CANVAS_W,
-              height: CANVAS_H,
-              transformOrigin: '0 0',
-              transform: `scale(${scale})`,
-              position: 'relative',
-            }}
-          >
-            {notes.length === 0 && (
-              <div className="pointer-events-none absolute left-1/2 top-40 -translate-x-1/2 text-center">
-                <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-3xl border-2 border-ink bg-white shadow-pop animate-float">
-                  <StickyNote className="h-8 w-8 text-coral" strokeWidth={2.5} />
-                </div>
-                <p className="font-display text-xl font-bold text-white drop-shadow">
-                  This board is empty!
-                </p>
-                <p className="font-body font-semibold text-white/90 drop-shadow">
-                  Hit “Add note” to pin your first one.
-                </p>
+          {notes.length === 0 && (
+            <div className="pointer-events-none absolute left-1/2 top-40 -translate-x-1/2 text-center">
+              <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-3xl border-2 border-ink bg-white shadow-pop animate-float">
+                <StickyNote className="h-8 w-8 text-coral" strokeWidth={2.5} />
               </div>
-            )}
-            {notes.map((note) => (
-              <NoteCard
-                key={note.id}
-                note={note}
-                canEdit={note.author_id === user?.id}
-                authorName={authorNames[note.author_id] ?? 'Someone'}
-                scale={scale}
-                onMove={handleMove}
-                onResize={handleResize}
-                onBringToFront={handleBringToFront}
-                onPatch={handlePatch}
-                onDelete={handleDelete}
-                onActivity={emitActivity}
-                onActivityEnd={emitActivityEnd}
-              />
-            ))}
+              <p className="font-display text-xl font-bold text-white drop-shadow">
+                This board is empty!
+              </p>
+              <p className="font-body font-semibold text-white/90 drop-shadow">
+                Hit “Add note” to pin your first one.
+              </p>
+            </div>
+          )}
+          {notes.map((note) => (
+            <NoteCard
+              key={note.id}
+              note={note}
+              canEdit={note.author_id === user?.id}
+              authorName={authorNames[note.author_id] ?? 'Someone'}
+              scale={scale}
+              onMove={handleMove}
+              onResize={handleResize}
+              onBringToFront={handleBringToFront}
+              onPatch={handlePatch}
+              onDelete={handleDelete}
+              onActivity={emitActivity}
+              onActivityEnd={emitActivityEnd}
+            />
+          ))}
 
-            {/* Live "shadows" of what other viewers are doing right now. */}
-            {Object.values(ghosts).map((g) => (
-              <GhostNote key={g.userId} ghost={g} />
-            ))}
-          </div>
+          {/* Live "shadows" of what other viewers are doing right now. */}
+          {Object.values(ghosts).map((g) => (
+            <GhostNote key={g.userId} ghost={g} />
+          ))}
         </div>
       </div>
 
