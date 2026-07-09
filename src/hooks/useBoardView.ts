@@ -157,16 +157,6 @@ export function useBoardView(boardId: string | undefined, enabled: boolean) {
     const isOnNote = (t: EventTarget | null) =>
       t instanceof Element && !!t.closest('[data-note]')
 
-    const onPointerDown = (e: PointerEvent) => {
-      if (isOnNote(e.target)) return // let the note handle its own drag
-      if (e.pointerType === 'mouse' && e.button !== 0) return
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
-      try {
-        el.setPointerCapture(e.pointerId)
-      } catch {
-        /* ignore */
-      }
-    }
     const onPointerMove = (e: PointerEvent) => {
       if (!pointers.has(e.pointerId)) return
       const prev = pointers.get(e.pointerId)!
@@ -189,16 +179,27 @@ export function useBoardView(boardId: string | undefined, enabled: boolean) {
       }
     }
     const endPointer = (e: PointerEvent) => {
+      if (!pointers.has(e.pointerId)) return
       pointers.delete(e.pointerId)
       if (pointers.size < 2) {
         lastDist = 0
         lastMid = null
       }
-      try {
-        el.releasePointerCapture(e.pointerId)
-      } catch {
-        /* ignore */
+      if (pointers.size === 0) {
+        window.removeEventListener('pointermove', onPointerMove)
+        window.removeEventListener('pointerup', endPointer)
+        window.removeEventListener('pointercancel', endPointer)
       }
+    }
+    const onPointerDown = (e: PointerEvent) => {
+      if (isOnNote(e.target)) return // let the note handle its own drag
+      if (e.pointerType === 'mouse' && e.button !== 0) return
+      if (pointers.size === 0) {
+        window.addEventListener('pointermove', onPointerMove)
+        window.addEventListener('pointerup', endPointer)
+        window.addEventListener('pointercancel', endPointer)
+      }
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
     }
 
     const onWheel = (e: WheelEvent) => {
@@ -211,16 +212,13 @@ export function useBoardView(boardId: string | undefined, enabled: boolean) {
     }
 
     el.addEventListener('pointerdown', onPointerDown)
-    el.addEventListener('pointermove', onPointerMove)
-    el.addEventListener('pointerup', endPointer)
-    el.addEventListener('pointercancel', endPointer)
     el.addEventListener('wheel', onWheel, { passive: false })
 
     return () => {
       el.removeEventListener('pointerdown', onPointerDown)
-      el.removeEventListener('pointermove', onPointerMove)
-      el.removeEventListener('pointerup', endPointer)
-      el.removeEventListener('pointercancel', endPointer)
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', endPointer)
+      window.removeEventListener('pointercancel', endPointer)
       el.removeEventListener('wheel', onWheel)
     }
   }, [enabled, boardId, apply, fitToView, zoomAt, panBy])

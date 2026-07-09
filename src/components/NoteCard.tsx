@@ -294,6 +294,8 @@ export default function NoteCard({
         suppressClick.current = true
         window.setTimeout(() => (suppressClick.current = false), 300)
       }
+      state.picked = false
+      state.panning = false
     }
 
     document.addEventListener('pointermove', move)
