@@ -56,8 +56,8 @@ export function useBoardView(boardId: string | undefined, enabled: boolean) {
     }, 350)
   }, [boardId])
 
-  // Keep the board from being panned completely off-screen. When the board is
-  // smaller than the viewport on an axis, it's centered on that axis.
+  // Keep the board from being panned completely off-screen, but always allow
+  // free panning in both axes (a margin keeps at least part of it reachable).
   const clampView = useCallback((v: View): View => {
     const el = containerRef.current
     if (!el) return v
@@ -65,12 +65,9 @@ export function useBoardView(boardId: string | undefined, enabled: boolean) {
     const vh = el.clientHeight
     const bw = CANVAS_W * v.s
     const bh = CANVAS_H * v.s
-    const m = 300 // let you pan a bit past the edges to reach edge notes
-    let { tx, ty } = v
-    if (bw <= vw) tx = (vw - bw) / 2
-    else tx = Math.min(m, Math.max(vw - bw - m, tx))
-    if (bh <= vh) ty = (vh - bh) / 2
-    else ty = Math.min(m, Math.max(vh - bh - m, ty))
+    const m = 220 // how far a board edge may travel inside the viewport
+    const tx = Math.min(m, Math.max(vw - bw - m, v.tx))
+    const ty = Math.min(m, Math.max(vh - bh - m, v.ty))
     return { s: v.s, tx, ty }
   }, [])
 
@@ -121,7 +118,10 @@ export function useBoardView(boardId: string | undefined, enabled: boolean) {
       0.05,
       Math.min(el.clientWidth / CANVAS_W, el.clientHeight / CANVAS_H),
     )
-    apply({ s, tx: 0, ty: 0 }) // clampView centers it
+    // Center the whole board in the viewport.
+    const tx = (el.clientWidth - CANVAS_W * s) / 2
+    const ty = (el.clientHeight - CANVAS_H * s) / 2
+    apply({ s, tx, ty })
   }, [apply])
 
   const zoomIn = useCallback(() => {

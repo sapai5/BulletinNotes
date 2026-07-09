@@ -17,6 +17,7 @@ import { supabase, NOTE_IMAGES_BUCKET } from '../lib/supabase'
 import { prepareImageForUpload, errorMessage } from '../lib/imageUpload'
 import { useUI } from '../context/UIContext'
 import type { ActivityInput } from '../hooks/useBoardCollab'
+import { CANVAS_W, CANVAS_H } from '../hooks/useBoardView'
 
 export const NOTE_COLORS = [
   '#fef08a', // yellow
@@ -204,8 +205,10 @@ export default function NoteCard({
       const r = rect()
       if (!r) return
       const v = getView()
-      const nx = Math.max(0, (state.lastX - r.left - v.tx) / v.s - state.grabX)
-      const ny = Math.max(0, (state.lastY - r.top - v.ty) / v.s - state.grabY)
+      const rawX = (state.lastX - r.left - v.tx) / v.s - state.grabX
+      const rawY = (state.lastY - r.top - v.ty) / v.s - state.grabY
+      const nx = Math.min(Math.max(0, CANVAS_W - size.w), Math.max(0, rawX))
+      const ny = Math.min(Math.max(0, CANVAS_H - size.h), Math.max(0, rawY))
       posRef.current = { x: nx, y: ny }
       setPos({ x: nx, y: ny })
       emit('moving', { x: nx, y: ny }, 55)
@@ -215,14 +218,18 @@ export default function NoteCard({
       if (!state.picked) return
       const r = rect()
       if (r) {
-        const EDGE = 64
-        const SPEED = 14
+        const EDGE = 50
+        const MAX = 9
+        const dl = state.lastX - r.left
+        const dr = r.right - state.lastX
+        const dt = state.lastY - r.top
+        const db = r.bottom - state.lastY
         let dx = 0
         let dy = 0
-        if (state.lastX - r.left < EDGE) dx = SPEED
-        else if (r.right - state.lastX < EDGE) dx = -SPEED
-        if (state.lastY - r.top < EDGE) dy = SPEED
-        else if (r.bottom - state.lastY < EDGE) dy = -SPEED
+        if (dl < EDGE) dx = MAX * (1 - Math.max(0, dl) / EDGE)
+        else if (dr < EDGE) dx = -MAX * (1 - Math.max(0, dr) / EDGE)
+        if (dt < EDGE) dy = MAX * (1 - Math.max(0, dt) / EDGE)
+        else if (db < EDGE) dy = -MAX * (1 - Math.max(0, db) / EDGE)
         if (dx || dy) {
           panBy(dx, dy)
           updateFromFinger()
