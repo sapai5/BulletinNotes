@@ -185,6 +185,16 @@ export default function NoteCard({
   // Mobile: touch a note to PAN the board; long-press to pick the note up,
   // then drag it. Dragging near a screen edge auto-pans the board.
   function startTouch(e: ReactPointerEvent) {
+    // iOS implicitly captures the touch pointer to the (moving) note element,
+    // which then retargets the NEXT touch to this note and blocks panning.
+    // Release it so gestures stay clean; our listeners live on `document`.
+    const tgt = e.target as Element
+    try {
+      if (tgt.hasPointerCapture?.(e.pointerId))
+        tgt.releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
     const startX = e.clientX
     const startY = e.clientY
     const state = {
@@ -402,7 +412,7 @@ export default function NoteCard({
             ? 'rotate(0deg) scale(1.02)'
             : `rotate(${tilt}deg)`,
       }}
-      className={`absolute flex flex-col rounded-2xl border-2 p-3 pt-5 text-ink transition-[box-shadow,transform] duration-150 ${
+      className={`absolute flex touch-none flex-col rounded-2xl border-2 p-3 pt-5 text-ink transition-[box-shadow,transform] duration-150 ${
         lifted
           ? 'border-coral shadow-pop-lg ring-4 ring-coral/40 animate-wiggle'
           : 'border-ink/80 shadow-pop hover:shadow-pop-lg'
