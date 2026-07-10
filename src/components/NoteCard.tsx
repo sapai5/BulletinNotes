@@ -13,6 +13,7 @@ import {
   X,
   Undo2,
   Eraser,
+  GripVertical,
 } from 'lucide-react'
 import type { Note, Stroke } from '../types'
 import { supabase, NOTE_IMAGES_BUCKET } from '../lib/supabase'
@@ -309,10 +310,16 @@ export default function NoteCard({
       {/* Tape strip */}
       <div className="pointer-events-none absolute -top-2.5 left-1/2 h-5 w-16 -translate-x-1/2 -rotate-2 rounded-sm bg-white/50 ring-1 ring-ink/10 backdrop-blur-[1px]" />
 
-      {/* Header row */}
+      {/* Header row (also the drag handle) */}
       <div className="mb-1 flex items-center justify-between gap-1">
-        <span className="max-w-[55%] truncate font-display text-[11px] font-bold text-ink/60">
-          {authorName}
+        <span className="flex min-w-0 items-center gap-1 font-display text-[11px] font-bold text-ink/60">
+          {canEdit && (
+            <GripVertical
+              className="h-3.5 w-3.5 shrink-0 text-ink/40"
+              strokeWidth={2.5}
+            />
+          )}
+          <span className="truncate">{authorName}</span>
         </span>
         {canEdit && (
           <div className="flex items-center gap-1" data-no-drag>
