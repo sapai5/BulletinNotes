@@ -44,6 +44,8 @@ create table if not exists public.notes (
   color text not null default '#fef08a',
   tags text[] not null default '{}',
   image_url text,
+  kind text not null default 'note' check (kind in ('note', 'drawing')),
+  strokes jsonb not null default '[]'::jsonb,
   x double precision not null default 40,
   y double precision not null default 40,
   width double precision not null default 220,

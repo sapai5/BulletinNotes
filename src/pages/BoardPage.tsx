@@ -8,10 +8,11 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
+  Pencil,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import type { Board, Note } from '../types'
+import type { Board, Note, NoteKind } from '../types'
 import { NOTE_COLORS } from '../components/NoteCard'
 import NoteCard from '../components/NoteCard'
 import GhostNote from '../components/GhostNote'
@@ -204,9 +205,12 @@ export default function BoardPage() {
   // ---- Mutations -----------------------------------------------------------
   const maxZ = notes.reduce((m, n) => Math.max(m, n.z_index), 0)
 
-  async function addNote() {
+  async function addNote(kind: NoteKind = 'note') {
     if (!boardId || !user) return
-    // Place the note near the center of what's currently visible, converting
+    const isDraw = kind === 'drawing'
+    const w = isDraw ? 300 : 220
+    const h = isDraw ? 240 : 220
+    // Place the item near the center of what's currently visible, converting
     // viewport pixels to canvas coordinates via the current transform.
     const el = containerRef.current
     const vw = el?.clientWidth ?? 600
@@ -215,9 +219,11 @@ export default function BoardPage() {
     const cx = (vw / 2 - tx) / s
     const cy = (vh / 2 - ty) / s
     const jitter = () => Math.random() * 40 - 20
-    const baseX = Math.max(0, Math.min(CANVAS_W - 220, cx - 110 + jitter()))
-    const baseY = Math.max(0, Math.min(CANVAS_H - 220, cy - 110 + jitter()))
-    const color = NOTE_COLORS[Math.floor(Math.random() * NOTE_COLORS.length)]
+    const baseX = Math.max(0, Math.min(CANVAS_W - w, cx - w / 2 + jitter()))
+    const baseY = Math.max(0, Math.min(CANVAS_H - h, cy - h / 2 + jitter()))
+    const color = isDraw
+      ? '#4a3f55'
+      : NOTE_COLORS[Math.floor(Math.random() * NOTE_COLORS.length)]
 
     const { data, error } = await supabase
       .from('notes')
@@ -226,8 +232,12 @@ export default function BoardPage() {
         author_id: user.id,
         text: '',
         color,
+        kind,
+        strokes: [],
         x: Math.round(baseX),
         y: Math.round(baseY),
+        width: w,
+        height: h,
         z_index: maxZ + 1,
       })
       .select()
@@ -325,9 +335,13 @@ export default function BoardPage() {
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 border-b-2 border-ink/10 bg-cream/90 px-3 py-2.5 sm:px-4">
-        <button onClick={addNote} className="btn-pop bg-coral px-3 py-1.5 text-sm text-white">
+        <button onClick={() => addNote('note')} className="btn-pop bg-coral px-3 py-1.5 text-sm text-white">
           <Plus className="h-4 w-4" strokeWidth={3} />
           Add note
+        </button>
+        <button onClick={() => addNote('drawing')} className="btn-pop bg-sky px-3 py-1.5 text-sm">
+          <Pencil className="h-4 w-4" strokeWidth={2.5} />
+          Draw
         </button>
         <button
           onClick={() => setShowMembers(true)}

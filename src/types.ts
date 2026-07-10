@@ -27,6 +27,16 @@ export interface BoardMember {
   profile?: Profile
 }
 
+export type NoteKind = 'note' | 'drawing'
+
+// A freeform pen stroke on a drawing note. Points are normalized (0..1)
+// relative to the drawing surface, stored flat: [x0, y0, x1, y1, ...].
+export interface Stroke {
+  color: string
+  width: number
+  pts: number[]
+}
+
 export interface Note {
   id: string
   board_id: string
@@ -35,6 +45,8 @@ export interface Note {
   color: string
   tags: string[]
   image_url: string | null
+  kind: NoteKind
+  strokes: Stroke[]
   // Freeform position + size on the canvas, in pixels.
   x: number
   y: number

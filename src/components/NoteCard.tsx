@@ -11,12 +11,15 @@ import {
   Loader2,
   MoveDiagonal2,
   X,
+  Undo2,
+  Eraser,
 } from 'lucide-react'
-import type { Note } from '../types'
+import type { Note, Stroke } from '../types'
 import { supabase, NOTE_IMAGES_BUCKET } from '../lib/supabase'
 import { prepareImageForUpload, errorMessage } from '../lib/imageUpload'
 import { useUI } from '../context/UIContext'
 import type { ActivityInput } from '../hooks/useBoardCollab'
+import DrawingCanvas from './DrawingCanvas'
 
 export const NOTE_COLORS = [
   '#fef08a', // yellow
@@ -28,6 +31,20 @@ export const NOTE_COLORS = [
   '#fdffb6', // lemon
   '#ffffff', // white
 ]
+
+// Pen colors for drawing notes (vivid, readable on a white whiteboard).
+export const PEN_COLORS = [
+  '#4a3f55', // ink
+  '#111827', // near-black
+  '#ff6b6b', // red
+  '#f59e0b', // amber
+  '#22c55e', // green
+  '#3b82f6', // blue
+  '#8b5cf6', // purple
+  '#ec4899', // pink
+]
+
+const PEN_WIDTH = 3
 
 const MIN_W = 160
 const MIN_H = 150
@@ -249,6 +266,17 @@ export default function NoteCard({
 
   const active = dragging || resizing
   const lifted = isDragging
+  const isDrawing = note.kind === 'drawing'
+
+  function commitStroke(stroke: Stroke) {
+    onPatch(note.id, { strokes: [...note.strokes, stroke] })
+  }
+  function undoStroke() {
+    onPatch(note.id, { strokes: note.strokes.slice(0, -1) })
+  }
+  function clearStrokes() {
+    if (note.strokes.length) onPatch(note.id, { strokes: [] })
+  }
 
   return (
     <div
@@ -264,7 +292,7 @@ export default function NoteCard({
         top: pos.y,
         width: size.w,
         height: size.h,
-        backgroundColor: note.color,
+        backgroundColor: isDrawing ? '#ffffff' : note.color,
         zIndex: note.z_index,
         transform: lifted
           ? 'rotate(-1deg) scale(1.08)'
@@ -289,34 +317,64 @@ export default function NoteCard({
         {canEdit && (
           <div className="flex items-center gap-1" data-no-drag>
             <button
-              title="Change color"
+              title={isDrawing ? 'Pen color' : 'Change color'}
               onClick={() => setShowPalette((s) => !s)}
               className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-ink/70 bg-white/70 hover:bg-white"
+              style={isDrawing ? { color: note.color } : undefined}
             >
               <Palette className="h-3.5 w-3.5" strokeWidth={2.5} />
             </button>
-            <label
-              title="Add image"
-              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border-2 border-ink/70 bg-white/70 hover:bg-white"
-            >
-              {uploading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.5} />
-              ) : (
-                <ImagePlus className="h-3.5 w-3.5" strokeWidth={2.5} />
-              )}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleImage}
-              />
-            </label>
+            {isDrawing ? (
+              <>
+                <button
+                  title="Undo last stroke"
+                  onClick={undoStroke}
+                  className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-ink/70 bg-white/70 hover:bg-white"
+                >
+                  <Undo2 className="h-3.5 w-3.5" strokeWidth={2.5} />
+                </button>
+                <button
+                  title="Clear drawing"
+                  onClick={async () => {
+                    if (
+                      !note.strokes.length ||
+                      (await confirm({
+                        title: 'Clear this drawing?',
+                        confirmText: 'Clear',
+                        danger: true,
+                      }))
+                    )
+                      clearStrokes()
+                  }}
+                  className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-ink/70 bg-white/70 hover:bg-white"
+                >
+                  <Eraser className="h-3.5 w-3.5" strokeWidth={2.5} />
+                </button>
+              </>
+            ) : (
+              <label
+                title="Add image"
+                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border-2 border-ink/70 bg-white/70 hover:bg-white"
+              >
+                {uploading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.5} />
+                ) : (
+                  <ImagePlus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleImage}
+                />
+              </label>
+            )}
             <button
-              title="Delete note"
+              title="Delete"
               onClick={async () => {
                 if (
                   await confirm({
-                    title: 'Delete this note?',
+                    title: isDrawing ? 'Delete this drawing?' : 'Delete this note?',
                     confirmText: 'Delete',
                     danger: true,
                   })
@@ -336,7 +394,7 @@ export default function NoteCard({
           data-no-drag
           className="mb-2 flex flex-wrap gap-1 rounded-xl border-2 border-ink/20 bg-white/60 p-1.5"
         >
-          {NOTE_COLORS.map((c) => (
+          {(isDrawing ? PEN_COLORS : NOTE_COLORS).map((c) => (
             <button
               key={c}
               onClick={() => {
@@ -350,78 +408,90 @@ export default function NoteCard({
         </div>
       )}
 
-      {note.image_url && (
-        <img
-          src={note.image_url}
-          alt=""
-          className="mb-2 max-h-40 w-full rounded-xl border-2 border-ink/20 object-cover"
-          draggable={false}
-        />
-      )}
-
-      {/* Body text */}
-      {editing ? (
-        <textarea
-          data-no-drag
-          autoFocus
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value)
-            emit('editing', { text: e.target.value })
-          }}
-          onBlur={commitText}
-          className="min-h-[48px] flex-1 resize-none rounded-lg bg-white/40 p-1.5 font-body text-sm font-semibold outline-none"
+      {isDrawing ? (
+        <DrawingCanvas
+          strokes={note.strokes}
+          penColor={note.color}
+          penWidth={PEN_WIDTH}
+          editable={canEdit}
+          onCommitStroke={commitStroke}
         />
       ) : (
-        <p
-          onClick={() => {
-            if (suppressClick.current) return
-            if (canEdit) setEditing(true)
-          }}
-          className="flex-1 overflow-auto whitespace-pre-wrap break-words font-body text-sm font-semibold"
-        >
-          {note.text || (
-            <span className="italic text-ink/40">
-              {canEdit ? 'Tap to add text…' : ''}
-            </span>
+        <>
+          {note.image_url && (
+            <img
+              src={note.image_url}
+              alt=""
+              className="mb-2 max-h-40 w-full rounded-xl border-2 border-ink/20 object-cover"
+              draggable={false}
+            />
           )}
-        </p>
-      )}
 
-      {/* Tags */}
-      <div className="mt-2 flex flex-wrap items-center gap-1" data-no-drag>
-        {note.tags.map((tag) => (
-          <span
-            key={tag}
-            className="inline-flex items-center gap-1 rounded-full border-2 border-ink/30 bg-white/60 px-2 py-0.5 font-display text-[11px] font-bold"
-          >
-            #{tag}
-            {canEdit && (
-              <button
-                onClick={() => removeTag(tag)}
-                className="text-ink/50 hover:text-coral"
+          {/* Body text */}
+          {editing ? (
+            <textarea
+              data-no-drag
+              autoFocus
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value)
+                emit('editing', { text: e.target.value })
+              }}
+              onBlur={commitText}
+              className="min-h-[48px] flex-1 resize-none rounded-lg bg-white/40 p-1.5 font-body text-sm font-semibold outline-none"
+            />
+          ) : (
+            <p
+              onClick={() => {
+                if (suppressClick.current) return
+                if (canEdit) setEditing(true)
+              }}
+              className="flex-1 overflow-auto whitespace-pre-wrap break-words font-body text-sm font-semibold"
+            >
+              {note.text || (
+                <span className="italic text-ink/40">
+                  {canEdit ? 'Tap to add text…' : ''}
+                </span>
+              )}
+            </p>
+          )}
+
+          {/* Tags */}
+          <div className="mt-2 flex flex-wrap items-center gap-1" data-no-drag>
+            {note.tags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 rounded-full border-2 border-ink/30 bg-white/60 px-2 py-0.5 font-display text-[11px] font-bold"
               >
-                <X className="h-3 w-3" strokeWidth={3} />
-              </button>
+                #{tag}
+                {canEdit && (
+                  <button
+                    onClick={() => removeTag(tag)}
+                    className="text-ink/50 hover:text-coral"
+                  >
+                    <X className="h-3 w-3" strokeWidth={3} />
+                  </button>
+                )}
+              </span>
+            ))}
+            {canEdit && (
+              <input
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    addTag()
+                  }
+                }}
+                onBlur={addTag}
+                placeholder="+tag"
+                className="w-14 rounded-full bg-white/40 px-2 py-0.5 font-body text-[11px] font-semibold outline-none placeholder:text-ink/40"
+              />
             )}
-          </span>
-        ))}
-        {canEdit && (
-          <input
-            value={tagDraft}
-            onChange={(e) => setTagDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                addTag()
-              }
-            }}
-            onBlur={addTag}
-            placeholder="+tag"
-            className="w-14 rounded-full bg-white/40 px-2 py-0.5 font-body text-[11px] font-semibold outline-none placeholder:text-ink/40"
-          />
-        )}
-      </div>
+          </div>
+        </>
+      )}
 
       {/* Resize handle */}
       {canEdit && (
